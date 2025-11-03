@@ -1,7 +1,7 @@
 @echo off
 rem --- Batch Script to Compile and Run CatalogueManager.java ---
 
-rem Check if java is in the path
+rem Check if Java is in the path
 where java >nul 2>nul
 if %errorlevel% neq 0 (
 echo.
@@ -22,17 +22,14 @@ pause
 exit /b 1
 )
 
-rem --- 2. Run the compiled Java class ---
-echo Compilation successful. Running application...
+rem --- 2. Run the compiled Java class (DEBUG MODE: using 'java' and 'pause' to show errors) ---
+echo Compilation successful. Launching application...
 echo.
 
-rem The application is run without showing the console window in the foreground
-rem once the Swing GUI is launched.
+rem java executes the application and shows console output for debugging.
 java CatalogueManager
 
-rem --- PAUSE ADDED HERE TO KEEP WINDOW OPEN AFTER EXECUTION ---
-echo.
-echo Application execution finished. Press any key to close this window...
+rem --- Pause after execution to read any runtime error messages ---
 pause
 
 exit /b 0
