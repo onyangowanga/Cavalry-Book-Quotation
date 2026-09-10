@@ -957,7 +957,14 @@ Discount: Kshs. ${discount.toLocaleString('en-US', {minimumFractionDigits: 2})}
     function escapeHtml(str) { return String(str ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;'); }
 
     if ('serviceWorker' in navigator && location.protocol !== 'file:') {
-      window.addEventListener('load', () => navigator.serviceWorker.register('./sw.js').catch(error => console.warn('PWA setup unavailable:', error)));
+      window.addEventListener('load', async () => {
+        try {
+          const reg = await navigator.serviceWorker.register('./sw.js', { scope: './' });
+          console.log('SW registered:', reg.scope);
+        } catch (error) {
+          console.warn('Service worker registration failed:', error);
+        }
+      });
     }
   </script>
 </body>
