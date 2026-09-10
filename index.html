@@ -60,8 +60,8 @@
     .search-wrap::before { content: "⌕"; position: absolute; left: 16px; top: 8px; color: var(--muted); font-size: 1.55rem; }
     #searchInput { width: 100%; padding: 13px 16px 13px 44px; border: 1px solid var(--line); border-radius: 12px; outline: none; }
     
-    .catalog-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 14px; min-width: 0; }
-    .book-card { min-height: 230px; min-width: 0; padding: 14px; border: 1px solid var(--line); border-radius: 14px; background: #fff; display: flex; flex-direction: column; justify-content: space-between; }
+    .catalog-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(110px, 1fr)); gap: 8px; min-width: 0; }
+    .book-card { min-height: 115px; min-width: 0; padding: 7px; border: 1px solid var(--line); border-radius: 10px; background: #fff; display: flex; flex-direction: column; justify-content: space-between; }
     .catalog-grid.list-view { display: grid; grid-template-columns: minmax(0, 1fr); gap: 8px; }
     .list-view .book-card { min-height: 0; min-width: 0; display: block; padding: 14px 15px; cursor: pointer; }
     .list-view .cover-thumb, .list-view .cover-placeholder { display: none; }
@@ -74,8 +74,8 @@
     .book-card { cursor: pointer; }
     
     /* Cover Image & Dynamic Fallback Placeholder Styles */
-    .cover-thumb { width: 100%; height: 130px; object-fit: contain; background: #f9f6f0; border-radius: 8px; margin-bottom: 10px; }
-    .cover-placeholder { position: relative; width: 100%; height: 130px; overflow: hidden; background: #24232a; color: #fff; border-radius: 8px; margin-bottom: 10px; padding: 14px; display: flex; flex-direction: column; justify-content: space-between; font-size: .86rem; line-height: 1.18; font-weight: 700; }
+    .cover-thumb { width: 100%; height: 65px; object-fit: contain; background: #f9f6f0; border-radius: 8px; margin-bottom: 5px; }
+    .cover-placeholder { position: relative; width: 100%; height: 65px; overflow: hidden; background: #24232a; color: #fff; border-radius: 8px; margin-bottom: 5px; padding: 7px; display: flex; flex-direction: column; justify-content: space-between; font-size: .86rem; line-height: 1.18; font-weight: 700; }
     .cover-placeholder::before { content: ""; position: absolute; width: 95px; height: 95px; right: -28px; top: -32px; border: 1px solid rgba(255,255,255,.35); border-radius: 50%; box-shadow: 0 0 0 12px rgba(255,255,255,.08), 0 0 0 24px rgba(255,255,255,.06); }
     .cover-placeholder::after { content: ""; position: absolute; width: 58px; height: 58px; right: 18px; bottom: -31px; border: 1px solid rgba(255,255,255,.3); transform: rotate(45deg); }
     .cover-placeholder.tone-1 { background: linear-gradient(135deg, #8d2737, #c65b58); }
@@ -217,13 +217,12 @@
       .custom-btn { width: 100%; }
       .view-toggle { align-self: flex-start; }
       .catalog-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 9px; }
-      .book-card { min-height: 220px; padding: 11px; }
-      .cover-thumb, .cover-placeholder { height: 112px; }
-      .book-title { font-size: .92rem; }
+      .book-card { min-height: 110px; padding: 6px; }
+      .cover-thumb, .cover-placeholder { height: 56px; }
       .book-author { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-      .book-footer { align-items: stretch; flex-direction: column; margin-top: 13px; }
+      .book-footer { align-items: center; flex-direction: row; margin-top: 13px; }
       .book-price { font-size: .9rem; }
-      .add-btn { width: 100%; }
+      .add-btn { width: auto; }
       .quote-panel { border-radius: 16px 0 0 16px; }
       .quote-header, .quote-body { padding-left: 17px; padding-right: 17px; }
       .drawer-actions { margin-left: 17px; margin-right: 17px; }
@@ -283,7 +282,7 @@
         </div>
         <div class="quote-body">
           <div class="quote-fields">
-            <label><span class="field-label">Your / Client Name</span><input id="clientName" type="text" placeholder="e.g. Jane Mwangi"></label>
+            <label><span class="field-label">Your / Client Name</span><input id="clientName" type="text" placeholder="e.g. Peter Nyongesa"></label>
             <label><span class="field-label">Phone Number</span><input id="clientPhone" type="tel" placeholder="e.g. 0712 345 678"></label>
           </div>
           <div id="cartItems" class="cart-items">
