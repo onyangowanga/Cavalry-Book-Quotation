@@ -1,5 +1,15 @@
-const CACHE_NAME = 'cavalry-quotes-v1';
-const APP_SHELL = ['./index.html', './manifest.json'];
+const CACHE_NAME = 'cavalry-quote-builder-v1';
+const APP_SHELL = [
+  './',
+  './index.html',
+  './favicon/favicon.svg',
+  './favicon/favicon-96x96.png',
+  './favicon/favicon.ico',
+  './favicon/apple-touch-icon.png',
+  './favicon/site.webmanifest',
+  './favicon/web-app-manifest-192x192.png',
+  './favicon/web-app-manifest-512x512.png'
+];
 
 self.addEventListener('install', event => {
   event.waitUntil(caches.open(CACHE_NAME).then(cache => cache.addAll(APP_SHELL)));
@@ -13,15 +23,14 @@ self.addEventListener('activate', event => {
   self.clients.claim();
 });
 
+// Network-first for API calls, cache-first for app shell assets.
 self.addEventListener('fetch', event => {
   if (event.request.method !== 'GET') return;
   event.respondWith(
     caches.match(event.request).then(cached => cached || fetch(event.request).then(response => {
-      if (new URL(event.request.url).origin === self.location.origin) {
-        const copy = response.clone();
-        caches.open(CACHE_NAME).then(cache => cache.put(event.request, copy));
-      }
+      const copy = response.clone();
+      caches.open(CACHE_NAME).then(cache => cache.put(event.request, copy));
       return response;
-    }))
+    }).catch(() => cached))
   );
 });
