@@ -6,6 +6,8 @@
   <meta name="theme-color" content="#24232a">
   <title>Cavalry Publishers | Quote Builder</title>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.16.105/pdf.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Manrope:wght@500;600;700;800&display=swap" rel="stylesheet">
@@ -107,6 +109,11 @@
     .whatsapp-btn, .print-btn { width: 100%; padding: 13px; }
     .whatsapp-btn { background: var(--green); }
     .print-btn { margin-top: 9px; background: #eee8e2; color: var(--ink); }
+    .download-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 9px; margin-top: 9px; }
+    .download-pdf-btn, .download-image-btn { padding: 12px 8px; border: 0; border-radius: 9px; color: #fff; font-size: .78rem; font-weight: 800; cursor: pointer; }
+    .download-pdf-btn { background: var(--red); }
+    .download-image-btn { background: var(--ink); }
+    .download-pdf-btn:hover, .download-image-btn:hover { opacity: .88; }
     .drawer-actions { display: grid; grid-template-columns: 1fr 1.2fr; gap: 9px; margin: 0 24px 20px; }
     .continue-btn, .checkout-btn { padding: 11px 12px; border: 0; border-radius: 9px; font-size: .8rem; font-weight: 800; cursor: pointer; }
     .continue-btn { background: #eee8e2; color: var(--ink); }
@@ -132,6 +139,7 @@
     .print-quote-heading { text-align: right; }
     .print-quote-heading h1 { color: var(--ink); font-size: 2.2rem; letter-spacing: -.05em; }
     .print-quote-heading p { margin-top: 6px; color: var(--muted); font-size: .78rem; }
+    .print-quote-heading p + p { margin-top: 2px; }
     .print-quote-meta { display: grid; grid-template-columns: 1fr 1fr; gap: 22px; padding: 24px 0; }
     .print-meta-block { padding: 14px 16px; background: #f7f3ef; border-radius: 8px; }
     .print-meta-label { color: var(--red); font-size: .65rem; font-weight: 800; letter-spacing: .12em; text-transform: uppercase; }
@@ -140,6 +148,7 @@
     .print-table th { padding: 11px 10px; background: var(--ink); color: #fff; font-size: .66rem; letter-spacing: .1em; text-align: left; text-transform: uppercase; }
     .print-table th:last-child, .print-table td:last-child { text-align: right; }
     .print-table td { padding: 13px 10px; border-bottom: 1px solid var(--line); vertical-align: top; }
+    .print-table th:first-child, .print-table td:first-child { width: 42px; text-align: center; }
     .print-table .print-item-title { font-weight: 700; }
     .print-table .print-item-detail { margin-top: 3px; color: var(--muted); font-size: .72rem; }
     .print-totals { width: 270px; margin: 24px 0 0 auto; }
@@ -251,7 +260,10 @@
             <button class="checkout-btn" onclick="focusCheckout()">Checkout</button>
           </div>
           <button class="whatsapp-btn" onclick="shareOnWhatsApp()">Share quote on WhatsApp</button>
-          <button class="print-btn" onclick="printQuotation()">Save / print quotation</button>
+          <div class="download-actions">
+            <button class="download-pdf-btn" onclick="downloadQuotation('pdf')">Download PDF</button>
+            <button class="download-image-btn" onclick="downloadQuotation('jpeg')">Download JPEG</button>
+          </div>
         </div>
       </aside>
     </div>
@@ -295,15 +307,15 @@
       <img class="print-quote-logo" src="https://drive.google.com/thumbnail?id=1F2xjo6EPzhSGZMFRrP8IAaMWXe_o7xKG&amp;sz=w1000" alt="Cavalry Publishers">
       <div class="print-quote-heading">
         <h1>Quotation</h1>
-        <p id="printQuoteDate"></p>
+        <p id="printQuoteSerial"></p><p id="printQuoteDate"></p>
       </div>
     </header>
     <div class="print-quote-meta">
       <div class="print-meta-block"><div class="print-meta-label">Prepared for</div><div class="print-meta-value" id="printClientName">Valued Client</div><div id="printClientPhone"></div></div>
-      <div class="print-meta-block"><div class="print-meta-label">Quotation details</div><div class="print-meta-value">Cavalry Publishers</div><div>Book printing and publishing services</div></div>
+      <div class="print-meta-block"><div class="print-meta-label">Quotation details</div><div class="print-meta-value" id="printQuoteNumber"></div><div>Cavalry Publishers · Book printing and publishing services</div></div>
     </div>
     <table class="print-table">
-      <thead><tr><th>Description</th><th>Qty</th><th>Unit price</th><th>Amount</th></tr></thead>
+      <thead><tr><th>No.</th><th>Description</th><th>Qty</th><th>Unit price</th><th>Amount</th></tr></thead>
       <tbody id="printQuoteItems"></tbody>
     </table>
     <div class="print-totals">
@@ -330,6 +342,7 @@
     let catalog = [];
     let cart = [];
     let catalogProgressTimer;
+    const quotationNumber = `CAV-${new Date().toISOString().slice(0, 10).replace(/-/g, '')}-${Math.floor(1000 + Math.random() * 9000)}`;
 
     window.addEventListener('load', loadCatalog);
 
@@ -349,7 +362,7 @@
         .then(response => {
             if (response.status === 'success') { 
               showCatalogProgress(100, 'Catalogue ready');
-                catalog = response.data; 
+                catalog = sortCatalogue(response.data); 
                 displayBooks(catalog); 
             } else {
                 showCatalogError('The catalogue could not be loaded: ' + (response.message || 'Unknown error'));
@@ -389,6 +402,7 @@
 
     function displayBooks(books) {
       const grid = document.getElementById('catalogGrid');
+      books = sortCatalogue(books);
       document.getElementById('catalogCount').textContent = `${books.length} title${books.length === 1 ? '' : 's'}`;
       if (!books.length) { grid.innerHTML = '<div class="loading">No books match your search.</div>'; return; }
       
@@ -412,6 +426,10 @@
           </div>
         </article>
       `).join('');
+    }
+
+    function sortCatalogue(books) {
+      return [...books].sort((first, second) => String(first.title || '').localeCompare(String(second.title || ''), undefined, { sensitivity: 'base', numeric: true }));
     }
 
     function createPlaceholder(title) {
@@ -590,18 +608,77 @@
       const subtotal = cart.reduce((sum, item) => sum + (item.activeUnitCost * item.quantity), 0);
       const total = Math.max(0, subtotal - discount);
 
+      document.getElementById('printQuoteSerial').textContent = `Quote ${quotationNumber}`;
       document.getElementById('printQuoteDate').textContent = `Issued ${new Date().toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' })}`;
+      document.getElementById('printQuoteNumber').textContent = quotationNumber;
       document.getElementById('printClientName').textContent = client;
       document.getElementById('printClientPhone').textContent = phone || 'Phone not provided';
-      document.getElementById('printQuoteItems').innerHTML = cart.map(item => {
+      document.getElementById('printQuoteItems').innerHTML = cart.map((item, index) => {
         const itemTotal = item.activeUnitCost * item.quantity;
         const sizeLabel = SIZE_LABELS[String(item.selectedSizeCode)] || 'Standard';
-        return `<tr><td><div class="print-item-title">${escapeHtml(item.title)}</div><div class="print-item-detail">${sizeLabel} · ${item.pages} pages${item.author ? ` · ${escapeHtml(item.author)}` : ''}</div></td><td>${item.quantity}</td><td>Kshs. ${Number(item.activeUnitCost).toLocaleString('en-US', { minimumFractionDigits: 2 })}</td><td>Kshs. ${itemTotal.toLocaleString('en-US', { minimumFractionDigits: 2 })}</td></tr>`;
+        return `<tr><td>${index + 1}</td><td><div class="print-item-title">${escapeHtml(item.title)}</div><div class="print-item-detail">${sizeLabel} · ${item.pages} pages${item.author ? ` · ${escapeHtml(item.author)}` : ''}</div></td><td>${item.quantity}</td><td>Kshs. ${Number(item.activeUnitCost).toLocaleString('en-US', { minimumFractionDigits: 2 })}</td><td>Kshs. ${itemTotal.toLocaleString('en-US', { minimumFractionDigits: 2 })}</td></tr>`;
       }).join('');
       document.getElementById('printSubtotal').textContent = `Kshs. ${subtotal.toLocaleString('en-US', { minimumFractionDigits: 2 })}`;
       document.getElementById('printDiscount').textContent = `Kshs. ${discount.toLocaleString('en-US', { minimumFractionDigits: 2 })}`;
       document.getElementById('printTotal').textContent = `Kshs. ${total.toLocaleString('en-US', { minimumFractionDigits: 2 })}`;
       window.print();
+    }
+
+    async function downloadQuotation(format) {
+      if (!cart.length) { alert('Add at least one book to your quote first.'); return; }
+      printQuotationContent();
+      const quote = document.getElementById('printQuote');
+      const previousDisplay = quote.style.display;
+      const previousPosition = quote.style.position;
+      const previousLeft = quote.style.left;
+      quote.style.display = 'block';
+      quote.style.position = 'absolute';
+      quote.style.left = '-10000px';
+      try {
+        const canvas = await html2canvas(quote, { backgroundColor: '#ffffff', scale: 2, useCORS: true });
+        const safeName = `Cavalry-Quotation-${quotationNumber}`;
+        if (format === 'jpeg') {
+          const link = document.createElement('a');
+          link.download = `${safeName}.jpg`;
+          link.href = canvas.toDataURL('image/jpeg', .94);
+          link.click();
+        } else {
+          const { jsPDF } = window.jspdf;
+          const pdf = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
+          const pageWidth = 210;
+          const pageHeight = (canvas.height * pageWidth) / canvas.width;
+          pdf.addImage(canvas.toDataURL('image/jpeg', .95), 'JPEG', 0, 0, pageWidth, pageHeight);
+          pdf.save(`${safeName}.pdf`);
+        }
+      } catch (error) {
+        console.error('Quotation download failed:', error);
+        alert('The quotation could not be downloaded. Please try again.');
+      } finally {
+        quote.style.display = previousDisplay;
+        quote.style.position = previousPosition;
+        quote.style.left = previousLeft;
+      }
+    }
+
+    function printQuotationContent() {
+      const client = document.getElementById('clientName').value.trim() || 'Valued Client';
+      const phone = document.getElementById('clientPhone').value.trim();
+      const discount = Math.max(0, parseFloat(document.getElementById('discountInput').value) || 0);
+      const subtotal = cart.reduce((sum, item) => sum + (item.activeUnitCost * item.quantity), 0);
+      const total = Math.max(0, subtotal - discount);
+      document.getElementById('printQuoteSerial').textContent = `Quote ${quotationNumber}`;
+      document.getElementById('printQuoteDate').textContent = `Issued ${new Date().toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' })}`;
+      document.getElementById('printQuoteNumber').textContent = quotationNumber;
+      document.getElementById('printClientName').textContent = client;
+      document.getElementById('printClientPhone').textContent = phone || 'Phone not provided';
+      document.getElementById('printQuoteItems').innerHTML = cart.map((item, index) => {
+        const itemTotal = item.activeUnitCost * item.quantity;
+        const sizeLabel = SIZE_LABELS[String(item.selectedSizeCode)] || 'Standard';
+        return `<tr><td>${index + 1}</td><td><div class="print-item-title">${escapeHtml(item.title)}</div><div class="print-item-detail">${sizeLabel} · ${item.pages} pages${item.author ? ` · ${escapeHtml(item.author)}` : ''}</div></td><td>${item.quantity}</td><td>Kshs. ${Number(item.activeUnitCost).toLocaleString('en-US', { minimumFractionDigits: 2 })}</td><td>Kshs. ${itemTotal.toLocaleString('en-US', { minimumFractionDigits: 2 })}</td></tr>`;
+      }).join('');
+      document.getElementById('printSubtotal').textContent = `Kshs. ${subtotal.toLocaleString('en-US', { minimumFractionDigits: 2 })}`;
+      document.getElementById('printDiscount').textContent = `Kshs. ${discount.toLocaleString('en-US', { minimumFractionDigits: 2 })}`;
+      document.getElementById('printTotal').textContent = `Kshs. ${total.toLocaleString('en-US', { minimumFractionDigits: 2 })}`;
     }
 
     function shareOnWhatsApp() {
@@ -640,12 +717,14 @@
       subtotal: subtotal,
       discount: discount,
       total: finalTotal
+      ,quotationNumber: quotationNumber
     })
   });
 
   // 2. Open WhatsApp link
   const message = 
 `*CAVALRY PUBLISHERS*
+Quotation: ${quotationNumber}
 Date: ${today}
 
 Hello ${client}, Thank you for your enquiry.
