@@ -4,7 +4,11 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta name="theme-color" content="#24232a">
-  <link rel="manifest" href="./manifest.json">
+  <link rel="icon" type="image/svg+xml" href="favicon/favicon.svg">
+  <link rel="icon" type="image/png" sizes="96x96" href="favicon/favicon-96x96.png">
+  <link rel="icon" href="favicon/favicon.ico">
+  <link rel="apple-touch-icon" sizes="180x180" href="favicon/apple-touch-icon.png">
+  <link rel="manifest" href="favicon/site.webmanifest">
   <title>Cavalry Publishers | Quote Builder</title>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.16.105/pdf.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
@@ -19,13 +23,15 @@
     }
 
     * { box-sizing: border-box; margin: 0; padding: 0; font-family: "DM Sans", system-ui, sans-serif; }
-    body { background: var(--canvas); color: var(--ink); padding: 0; overflow-x: hidden; }
-    button, input, select { font: inherit; }
+    html { font-size: 92%; overflow-x: hidden; overflow-x: clip; max-width: 100%; }
+    body { background: var(--canvas); color: var(--ink); padding: 0; width: 100%; max-width: 100vw; overflow-x: hidden; overflow-x: clip; }
+    button, input, select { font: inherit; max-width: 100%; }
+    img { max-width: 100%; }
 
-    .app-shell { max-width: 1380px; margin: 0 auto; padding: 22px 28px 48px; }
+    .app-shell { max-width: 1380px; width: 100%; margin: 0 auto; padding: 22px 28px 48px; overflow-x: hidden; }
     .topbar { display: grid; grid-template-columns: minmax(280px, .9fr) minmax(420px, 1.1fr); align-items: center; gap: 42px; margin-bottom: 22px; }
     .brand { display: flex; align-items: center; gap: 14px; }
-    .brand img { width: 170px; display: block; }
+    .brand img { width: 110px; display: block; }
     .brand-copy { border-left: 1px solid var(--line); padding-left: 14px; color: var(--muted); font-size: .77rem; letter-spacing: .08em; text-transform: uppercase; }
     .eyebrow { color: var(--red); font-weight: 800; font-size: .75rem; letter-spacing: .13em; text-transform: uppercase; }
     
@@ -54,10 +60,10 @@
     .search-wrap::before { content: "⌕"; position: absolute; left: 16px; top: 8px; color: var(--muted); font-size: 1.55rem; }
     #searchInput { width: 100%; padding: 13px 16px 13px 44px; border: 1px solid var(--line); border-radius: 12px; outline: none; }
     
-    .catalog-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 14px; }
-    .book-card { min-height: 230px; padding: 14px; border: 1px solid var(--line); border-radius: 14px; background: #fff; display: flex; flex-direction: column; justify-content: space-between; }
-    .catalog-grid.list-view { display: grid; grid-template-columns: 1fr; gap: 8px; }
-    .list-view .book-card { min-height: 0; display: block; padding: 14px 15px; cursor: pointer; }
+    .catalog-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(110px, 1fr)); gap: 8px; min-width: 0; }
+    .book-card { min-height: 115px; min-width: 0; padding: 7px; border: 1px solid var(--line); border-radius: 10px; background: #fff; display: flex; flex-direction: column; justify-content: space-between; }
+    .catalog-grid.list-view { display: grid; grid-template-columns: minmax(0, 1fr); gap: 8px; }
+    .list-view .book-card { min-height: 0; min-width: 0; display: block; padding: 14px 15px; cursor: pointer; }
     .list-view .cover-thumb, .list-view .cover-placeholder { display: none; }
     .list-view .book-title { display: block; font-size: .96rem; }
     .list-view .book-author { margin-top: 4px; }
@@ -68,8 +74,8 @@
     .book-card { cursor: pointer; }
     
     /* Cover Image & Dynamic Fallback Placeholder Styles */
-    .cover-thumb { width: 100%; height: 130px; object-fit: contain; background: #f9f6f0; border-radius: 8px; margin-bottom: 10px; }
-    .cover-placeholder { position: relative; width: 100%; height: 130px; overflow: hidden; background: #24232a; color: #fff; border-radius: 8px; margin-bottom: 10px; padding: 14px; display: flex; flex-direction: column; justify-content: space-between; font-size: .86rem; line-height: 1.18; font-weight: 700; }
+    .cover-thumb { width: 100%; height: 65px; object-fit: contain; background: #f9f6f0; border-radius: 8px; margin-bottom: 5px; }
+    .cover-placeholder { position: relative; width: 100%; height: 65px; overflow: hidden; background: #24232a; color: #fff; border-radius: 8px; margin-bottom: 5px; padding: 7px; display: flex; flex-direction: column; justify-content: space-between; font-size: .86rem; line-height: 1.18; font-weight: 700; }
     .cover-placeholder::before { content: ""; position: absolute; width: 95px; height: 95px; right: -28px; top: -32px; border: 1px solid rgba(255,255,255,.35); border-radius: 50%; box-shadow: 0 0 0 12px rgba(255,255,255,.08), 0 0 0 24px rgba(255,255,255,.06); }
     .cover-placeholder::after { content: ""; position: absolute; width: 58px; height: 58px; right: 18px; bottom: -31px; border: 1px solid rgba(255,255,255,.3); transform: rotate(45deg); }
     .cover-placeholder.tone-1 { background: linear-gradient(135deg, #8d2737, #c65b58); }
@@ -80,12 +86,12 @@
     .cover-title { position: relative; z-index: 1; max-width: 82%; }
     .cover-mark { position: relative; z-index: 1; font-size: .55rem; letter-spacing: .13em; text-transform: uppercase; opacity: .8; }
     
-    .book-title { color: var(--ink); font-size: 1rem; line-height: 1.25; }
-    .book-author { margin-top: 4px; color: var(--muted); font-size: .8rem; }
+    .book-title { color: var(--ink); font-size: 1rem; line-height: 1.25; overflow-wrap: break-word; word-break: break-word; }
+    .book-author { margin-top: 4px; color: var(--muted); font-size: .8rem; overflow-wrap: break-word; word-break: break-word; }
     .book-meta { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 10px; color: var(--muted); font-size: .72rem; }
     .book-meta span { padding: 4px 6px; border-radius: 6px; background: #f5f0eb; }
-    .book-footer { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: 16px; }
-    .book-price { color: var(--red); font-weight: 800; font-size: 1rem; }
+    .book-footer { display: flex; align-items: stretch; flex-direction: column; gap: 8px; margin-top: 16px; min-width: 0; }
+    .book-price { color: var(--red); font-weight: 800; font-size: 1rem; min-width: 0; overflow-wrap: break-word; }
     
     .add-btn, .custom-btn, .whatsapp-btn, .print-btn { border: 0; border-radius: 9px; color: #fff; font-weight: 700; cursor: pointer; }
     .add-btn { padding: 8px 12px; background: var(--ink); font-size: .8rem; }
@@ -93,7 +99,7 @@
     .custom-btn { background: var(--red); padding: 12px 16px; font-size: .85rem; }
 
     /* Floating cart drawer */
-    .cart-fab { position: fixed; right: 24px; top: 24px; z-index: 80; display: inline-flex; align-items: center; gap: 10px; min-height: 58px; padding: 0 18px; border: 0; border-radius: 999px; background: var(--ink); color: #fff; box-shadow: 0 14px 30px rgba(36, 35, 42, .24); font-weight: 800; cursor: pointer; }
+    .cart-fab { position: fixed; right: 24px; top: 24px; z-index: 80; display: inline-flex; align-items: center; gap: 10px; min-height: 58px; max-width: calc(100vw - 48px); padding: 0 18px; border: 0; border-radius: 999px; background: var(--ink); color: #fff; box-shadow: 0 14px 30px rgba(36, 35, 42, .24); font-weight: 800; cursor: pointer; }
     .cart-fab:hover { background: var(--red); transform: translateY(-2px); }
     .cart-icon { font-size: 1.35rem; line-height: 1; }
     .cart-fab-label { font-size: .82rem; }
@@ -101,15 +107,15 @@
     .cart-fab.is-empty .cart-badge { background: #6f6b72; }
     .drawer-backdrop { position: fixed; inset: 0; z-index: 89; background: rgba(26, 24, 29, .42); opacity: 0; pointer-events: none; transition: opacity 180ms ease; }
     .drawer-backdrop.is-visible { opacity: 1; pointer-events: auto; }
-    .quote-panel { position: fixed; z-index: 90; top: 0; right: 0; width: min(420px, 100vw); height: 100dvh; overflow-y: auto; border-radius: 20px 0 0 20px; background: var(--paper); box-shadow: -20px 0 60px rgba(36, 35, 42, .18); opacity: 0; pointer-events: none; transform: translateX(105%); transition: transform 220ms ease, opacity 180ms ease; }
-    .quote-panel.is-open { opacity: 1; pointer-events: auto; transform: translateX(0); }
-    .quote-header { padding: 24px 24px 18px; background: var(--ink); color: #fff; }
+    .quote-panel { position: fixed; z-index: 90; top: 0; right: 0; width: min(340px, 100vw); height: 100dvh; overflow-y: auto; border-radius: 20px 0 0 20px; background: var(--paper); box-shadow: -20px 0 60px rgba(36, 35, 42, .18); opacity: 0; visibility: hidden; pointer-events: none; transform: translateX(105%); transition: transform 220ms ease, opacity 180ms ease, visibility 220ms; }
+    .quote-panel.is-open { opacity: 1; visibility: visible; pointer-events: auto; transform: translateX(0); }
+    .quote-header { padding: 18px 18px 14px; background: var(--ink); color: #fff; }
     .quote-header-top { display: flex; align-items: flex-start; justify-content: space-between; gap: 18px; }
     .drawer-close { border: 0; background: rgba(255,255,255,.12); color: #fff; width: 34px; height: 34px; border-radius: 50%; font-size: 1.3rem; cursor: pointer; }
     .drawer-close:hover { background: rgba(255,255,255,.22); }
     .quote-header .eyebrow { color: #e99ba2; }
-    .quote-header h2 { margin-top: 6px; font-size: 1.75rem; font-weight: 700; letter-spacing: -.03em; }
-    .quote-body { padding: 20px 24px 24px; }
+    .quote-header h2 { margin-top: 6px; font-size: 1.5rem; font-weight: 700; letter-spacing: -.03em; }
+    .quote-body { padding: 16px 18px 18px; }
     .field-label { display: block; margin-bottom: 5px; color: var(--muted); font-size: .75rem; font-weight: 700; text-transform: uppercase; }
     .quote-fields { display: grid; gap: 11px; margin-bottom: 20px; }
     .quote-fields input, .modal-body input, .modal-body select { width: 100%; padding: 10px 12px; border: 1px solid var(--line); border-radius: 9px; outline: none; }
@@ -146,11 +152,13 @@
     .modal-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px; }
     .modal-body { display: grid; gap: 12px; }
     .book-detail-modal { display: none; position: fixed; inset: 0; z-index: 110; align-items: center; justify-content: center; padding: 18px; background: rgba(26,24,29,.5); }
-    .book-detail-card { width: min(680px, 100%); max-height: min(720px, calc(100vh - 36px)); overflow: auto; padding: 24px; border-radius: 18px; background: var(--paper); box-shadow: var(--shadow); }
+    .book-detail-card { width: min(440px, 100%); max-height: min(640px, calc(100vh - 36px)); overflow: auto; padding: 20px; border-radius: 18px; background: var(--paper); box-shadow: var(--shadow); }
     .book-detail-top { display: flex; justify-content: space-between; align-items: flex-start; gap: 18px; }
-    .book-detail-content { display: grid; grid-template-columns: 180px 1fr; gap: 24px; margin-top: 22px; }
-    .book-detail-cover { width: 180px; height: 240px; object-fit: contain; border-radius: 10px; background: #f5f0eb; }
-    .book-detail-cover.cover-placeholder { height: 240px; }
+    .book-detail-top .drawer-close { background: rgba(36,35,42,.09); color: var(--ink); }
+    .book-detail-top .drawer-close:hover { background: rgba(36,35,42,.18); }
+    .book-detail-content { display: grid; grid-template-columns: 130px 1fr; gap: 16px; margin-top: 18px; }
+    .book-detail-cover { width: 130px; height: 175px; object-fit: contain; border-radius: 10px; background: #f5f0eb; }
+    .book-detail-cover.cover-placeholder { height: 175px; }
     .detail-list { display: grid; gap: 12px; align-content: start; }
     .detail-row { padding-bottom: 10px; border-bottom: 1px solid var(--line); }
     .detail-row strong { display: block; margin-top: 3px; }
@@ -199,22 +207,22 @@
     @media (max-width: 520px) {
       .app-shell { padding: 16px 12px 32px; }
       .brand { align-items: flex-start; flex-direction: column; gap: 9px; }
-      .brand img { width: 145px; }
+      .brand img { width: 95px; }
       .brand-copy { border-left: 0; border-top: 1px solid var(--line); padding: 8px 0 0; }
       h1 { font-size: 2.5rem; }
       .catalog-panel { padding: 13px; border-radius: 16px; }
       .catalog-toolbar { align-items: stretch; flex-direction: column; gap: 10px; margin-bottom: 15px; }
-      .search-wrap { min-width: 0; }
+      .catalog-toolbar > * { max-width: 100%; }
+      .search-wrap { min-width: 0; width: 100%; }
       .custom-btn { width: 100%; }
       .view-toggle { align-self: flex-start; }
       .catalog-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 9px; }
-      .book-card { min-height: 220px; padding: 11px; }
-      .cover-thumb, .cover-placeholder { height: 112px; }
-      .book-title { font-size: .92rem; }
+      .book-card { min-height: 110px; padding: 6px; }
+      .cover-thumb, .cover-placeholder { height: 56px; }
       .book-author { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-      .book-footer { align-items: stretch; flex-direction: column; margin-top: 13px; }
+      .book-footer { align-items: center; justify-content: space-between; flex-direction: row; margin-top: 13px; }
       .book-price { font-size: .9rem; }
-      .add-btn { width: 100%; }
+      .add-btn { width: auto; }
       .quote-panel { border-radius: 16px 0 0 16px; }
       .quote-header, .quote-body { padding-left: 17px; padding-right: 17px; }
       .drawer-actions { margin-left: 17px; margin-right: 17px; }
@@ -222,7 +230,7 @@
       .cart-fab-label { display: inline; max-width: 90px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: .76rem; }
       .cart-badge { position: absolute; top: -4px; right: -4px; min-width: 21px; height: 21px; padding: 0 5px; }
       .book-detail-content { grid-template-columns: 1fr; }
-      .book-detail-cover, .book-detail-cover.cover-placeholder { width: 140px; height: 180px; }
+      .book-detail-cover, .book-detail-cover.cover-placeholder { width: 120px; height: 160px; }
       .modal-card { max-height: calc(100vh - 24px); overflow-y: auto; padding: 18px; }
     }
     @media print {
@@ -237,12 +245,12 @@
   <main class="app-shell">
     <header class="topbar">
       <div class="brand">
-        <img src="https://drive.google.com/thumbnail?id=1F2xjo6EPzhSGZMFRrP8IAaMWXe_o7xKG&amp;sz=w1000" alt="Cavalry Publishers" crossorigin="anonymous">
-        <div class="brand-copy">Print with purpose</div>
+        <img src="favicon/favicon.svg" alt="Cavalry Publishers">
+        <!-- <div class="brand-copy">Print with purpose</div> -->
       </div>
       <div class="intro">
         <div class="eyebrow">Cavalry Publishers</div>
-        <h1>Build a quote<br>in a few clicks.</h1>
+        <h2>Build a quote<br>in a few clicks.</h2>
         <p>Browse the catalogue, adjust sizes and quantities, and send clean quotes straight to WhatsApp.</p>
       </div>
     </header>
@@ -274,7 +282,7 @@
         </div>
         <div class="quote-body">
           <div class="quote-fields">
-            <label><span class="field-label">Your / Client Name</span><input id="clientName" type="text" placeholder="e.g. Jane Mwangi"></label>
+            <label><span class="field-label">Your / Client Name</span><input id="clientName" type="text" placeholder="e.g. Peter Nyongesa"></label>
             <label><span class="field-label">Phone Number</span><input id="clientPhone" type="tel" placeholder="e.g. 0712 345 678"></label>
           </div>
           <div id="cartItems" class="cart-items">
@@ -481,7 +489,8 @@
       catalogueView = view;
       document.getElementById('gridViewButton').classList.toggle('is-active', view === 'grid');
       document.getElementById('listViewButton').classList.toggle('is-active', view === 'list');
-      displayBooks(document.getElementById('searchInput').value ? catalog.filter(book => `${book.title} ${book.author}`.toLowerCase().includes(document.getElementById('searchInput').value.toLowerCase().trim())) : catalog);
+      const query = document.getElementById('searchInput').value.toLowerCase().trim();
+      displayBooks(query ? catalog.filter(book => `${book.title} ${book.author}`.toLowerCase().includes(query)) : catalog);
     }
 
     function openBookDetails(bookId) {
@@ -826,8 +835,8 @@
       itemsSummary: itemsSummary,
       subtotal: subtotal,
       discount: discount,
-      total: finalTotal
-      ,quotationNumber: quotationNumber
+      total: finalTotal,
+      quotationNumber: quotationNumber
     })
   });
 
