@@ -134,6 +134,7 @@
     .progress-fill { width: 0%; height: 100%; border-radius: inherit; background: linear-gradient(90deg, var(--red), #dc6b67); transition: width 260ms ease; }
     .progress-status { margin-top: 9px; font-size: .76rem; }
     .print-quote { display: none; }
+    .print-quote.export-surface { width: 159.2mm; min-height: 246.2mm; padding: 0; background: #fff; }
     .print-quote-header { display: flex; justify-content: space-between; align-items: flex-start; gap: 30px; padding-bottom: 28px; border-bottom: 3px solid var(--red); }
     .print-quote-logo { width: 220px; height: auto; }
     .print-quote-heading { text-align: right; }
@@ -634,20 +635,40 @@
       quote.style.display = 'block';
       quote.style.position = 'absolute';
       quote.style.left = '-10000px';
+      quote.classList.add('export-surface');
       try {
         const canvas = await html2canvas(quote, { backgroundColor: '#ffffff', scale: 2, useCORS: true });
         const safeName = `Cavalry-Quotation-${quotationNumber}`;
+        const outputWidth = 794;
+        const outputHeight = 1123;
+        const margin = 96;
+        const innerWidth = outputWidth - (margin * 2);
+        const innerHeight = outputHeight - (margin * 2);
+        const scale = Math.min(innerWidth / canvas.width, innerHeight / canvas.height);
+        const renderedWidth = canvas.width * scale;
+        const renderedHeight = canvas.height * scale;
         if (format === 'jpeg') {
+          const output = document.createElement('canvas');
+          output.width = outputWidth;
+          output.height = outputHeight;
+          const context = output.getContext('2d');
+          context.fillStyle = '#ffffff';
+          context.fillRect(0, 0, outputWidth, outputHeight);
+          context.drawImage(canvas, margin + ((innerWidth - renderedWidth) / 2), margin, renderedWidth, renderedHeight);
           const link = document.createElement('a');
           link.download = `${safeName}.jpg`;
-          link.href = canvas.toDataURL('image/jpeg', .94);
+          link.href = output.toDataURL('image/jpeg', .94);
           link.click();
         } else {
           const { jsPDF } = window.jspdf;
           const pdf = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
-          const pageWidth = 210;
-          const pageHeight = (canvas.height * pageWidth) / canvas.width;
-          pdf.addImage(canvas.toDataURL('image/jpeg', .95), 'JPEG', 0, 0, pageWidth, pageHeight);
+          const marginMm = 25.4;
+          const innerWidthMm = 159.2;
+          const innerHeightMm = 246.2;
+          const imageWidthMm = Math.min(innerWidthMm, (canvas.width * innerHeightMm) / canvas.height);
+          const imageHeightMm = (canvas.height * imageWidthMm) / canvas.width;
+          const imageX = marginMm + ((innerWidthMm - imageWidthMm) / 2);
+          pdf.addImage(canvas.toDataURL('image/jpeg', .95), 'JPEG', imageX, marginMm, imageWidthMm, imageHeightMm);
           pdf.save(`${safeName}.pdf`);
         }
       } catch (error) {
@@ -657,6 +678,7 @@
         quote.style.display = previousDisplay;
         quote.style.position = previousPosition;
         quote.style.left = previousLeft;
+        quote.classList.remove('export-surface');
       }
     }
 
