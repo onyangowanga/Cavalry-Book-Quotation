@@ -56,10 +56,10 @@
     .search-wrap::before { content: "⌕"; position: absolute; left: 16px; top: 8px; color: var(--muted); font-size: 1.55rem; }
     #searchInput { width: 100%; padding: 13px 16px 13px 44px; border: 1px solid var(--line); border-radius: 12px; outline: none; }
     
-    .catalog-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 14px; }
-    .book-card { min-height: 230px; padding: 14px; border: 1px solid var(--line); border-radius: 14px; background: #fff; display: flex; flex-direction: column; justify-content: space-between; }
-    .catalog-grid.list-view { display: grid; grid-template-columns: 1fr; gap: 8px; }
-    .list-view .book-card { min-height: 0; display: block; padding: 14px 15px; cursor: pointer; }
+    .catalog-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 14px; min-width: 0; }
+    .book-card { min-height: 230px; min-width: 0; padding: 14px; border: 1px solid var(--line); border-radius: 14px; background: #fff; display: flex; flex-direction: column; justify-content: space-between; }
+    .catalog-grid.list-view { display: grid; grid-template-columns: minmax(0, 1fr); gap: 8px; }
+    .list-view .book-card { min-height: 0; min-width: 0; display: block; padding: 14px 15px; cursor: pointer; }
     .list-view .cover-thumb, .list-view .cover-placeholder { display: none; }
     .list-view .book-title { display: block; font-size: .96rem; }
     .list-view .book-author { margin-top: 4px; }
@@ -82,12 +82,12 @@
     .cover-title { position: relative; z-index: 1; max-width: 82%; }
     .cover-mark { position: relative; z-index: 1; font-size: .55rem; letter-spacing: .13em; text-transform: uppercase; opacity: .8; }
     
-    .book-title { color: var(--ink); font-size: 1rem; line-height: 1.25; }
-    .book-author { margin-top: 4px; color: var(--muted); font-size: .8rem; }
+    .book-title { color: var(--ink); font-size: 1rem; line-height: 1.25; overflow-wrap: break-word; word-break: break-word; }
+    .book-author { margin-top: 4px; color: var(--muted); font-size: .8rem; overflow-wrap: break-word; word-break: break-word; }
     .book-meta { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 10px; color: var(--muted); font-size: .72rem; }
     .book-meta span { padding: 4px 6px; border-radius: 6px; background: #f5f0eb; }
-    .book-footer { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: 16px; }
-    .book-price { color: var(--red); font-weight: 800; font-size: 1rem; }
+    .book-footer { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: 16px; min-width: 0; }
+    .book-price { color: var(--red); font-weight: 800; font-size: 1rem; min-width: 0; overflow-wrap: break-word; }
     
     .add-btn, .custom-btn, .whatsapp-btn, .print-btn { border: 0; border-radius: 9px; color: #fff; font-weight: 700; cursor: pointer; }
     .add-btn { padding: 8px 12px; background: var(--ink); font-size: .8rem; }
