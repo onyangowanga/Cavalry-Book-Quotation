@@ -358,7 +358,7 @@
 
   <section id="printQuote" class="print-quote" aria-label="Printable quotation">
     <header class="print-quote-header">
-      <img class="print-quote-logo" src="https://drive.google.com/thumbnail?id=1F2xjo6EPzhSGZMFRrP8IAaMWXe_o7xKG&amp;sz=w1000" alt="Cavalry Publishers" crossorigin="anonymous" onerror="this.style.display='none'; this.nextElementSibling.style.display='block';">
+      <img class="print-quote-logo" src="https://lh3.googleusercontent.com/d/1F2xjo6EPzhSGZMFRrP8IAaMWXe_o7xKG=s1000" alt="Cavalry Publishers" crossorigin="anonymous" onerror="this.style.display='none'; this.nextElementSibling.style.display='block';">
       <div class="print-logo-fallback">CAVALRY<br><span>PUBLISHERS</span></div>
       <div class="print-quote-heading">
         <h1>Quotation</h1>
@@ -384,7 +384,17 @@
   <script>
     const API_URL = "https://script.google.com/macros/s/AKfycbx9xaPSdNyEa51Lws0iEBobfHrh4ZqAw4R5QO5YJi680D1B-S1HlRdrTxMi5QdXTccXEA/exec";
     const COMPANY_WHATSAPP = "254726953346"; // Replace with your primary business WhatsApp phone number
-    
+
+    // drive.google.com/thumbnail links are blocked by CORS; googleusercontent.com serves the same image without that restriction.
+    function formatDriveUrl(url) {
+      if (!url) return url;
+      const match = url.match(/\/d\/([a-zA-Z0-9_-]+)/) || url.match(/id=([a-zA-Z0-9_-]+)/);
+      if (match && match[1]) {
+        return `https://lh3.googleusercontent.com/d/${match[1]}=s1000`;
+      }
+      return url;
+    }
+
     pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.16.105/pdf.worker.min.js';
 
     // Labels are for display only; the backend remains authoritative for original prices.
@@ -467,7 +477,7 @@
         <article class="book-card" tabindex="0" role="button" onclick="openBookDetails(${book.id})" onkeydown="if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); openBookDetails(${book.id}); }">
           <div>
             ${book.coverUrl 
-              ? `<img src="${book.coverUrl}" class="cover-thumb" alt="${escapeHtml(book.title)} cover" onerror="this.replaceWith(createPlaceholder(this.alt.replace(/ cover$/, '')))">` 
+              ? `<img src="${formatDriveUrl(book.coverUrl)}" class="cover-thumb" alt="${escapeHtml(book.title)} cover" onerror="this.replaceWith(createPlaceholder(this.alt.replace(/ cover$/, '')))">` 
               : createPlaceholderMarkup(book.title)}
             <div class="book-title">${escapeHtml(book.title)}</div>
             <div class="book-author">${escapeHtml(book.author)}</div>
@@ -503,7 +513,7 @@
       document.getElementById('bookDetailSize').textContent = SIZE_LABELS[String(book.sizeCode)] || book.sizeLabel || 'Standard';
       document.getElementById('bookDetailPrice').textContent = `Kshs. ${Number(book.unitCost).toLocaleString('en-US', { minimumFractionDigits: 2 })}`;
       const cover = document.getElementById('bookDetailCover');
-      cover.innerHTML = book.coverUrl ? `<img class="book-detail-cover" src="${book.coverUrl}" alt="${escapeHtml(book.title)} cover" onerror="this.replaceWith(createPlaceholder(this.alt.replace(/ cover$/, '')))" />` : createPlaceholderMarkup(book.title);
+      cover.innerHTML = book.coverUrl ? `<img class="book-detail-cover" src="${formatDriveUrl(book.coverUrl)}" alt="${escapeHtml(book.title)} cover" onerror="this.replaceWith(createPlaceholder(this.alt.replace(/ cover$/, '')))" />` : createPlaceholderMarkup(book.title);
       const detailCover = cover.firstElementChild;
       if (detailCover && !detailCover.classList.contains('cover-placeholder')) detailCover.classList.add('book-detail-cover');
       document.getElementById('bookDetailAdd').onclick = () => { addToCart(book.id); closeBookDetails(); };

@@ -1,8 +1,8 @@
 {
   "name": "Cavalry Publishers | Quote Builder",
   "short_name": "Cavalry Publishers",
-  "start_url": "/index.html",
-  "scope": "/",
+  "start_url": "../index.html",
+  "scope": "../",
   "icons": [
     {
       "src": "web-app-manifest-192x192.png",
