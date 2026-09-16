@@ -56,6 +56,12 @@
     .view-toggle { display: inline-flex; gap: 3px; padding: 3px; border: 1px solid var(--line); border-radius: 10px; background: #f5f0eb; }
     .view-toggle button { border: 0; border-radius: 7px; padding: 8px 11px; background: transparent; color: var(--muted); font-size: .76rem; font-weight: 800; cursor: pointer; }
     .view-toggle button.is-active { background: #fff; color: var(--ink); box-shadow: 0 2px 7px rgba(36,35,42,.1); }
+    .refresh-btn { display: inline-flex; align-items: center; gap: 6px; border: 1px solid var(--line); border-radius: 10px; padding: 9px 13px; background: #fff; color: var(--ink); font-size: .78rem; font-weight: 800; cursor: pointer; }
+    .refresh-btn:hover { border-color: var(--red); color: var(--red); }
+    .refresh-btn:disabled { opacity: .6; cursor: not-allowed; }
+    .refresh-btn .refresh-icon { display: inline-block; font-size: .95rem; transition: transform 400ms ease; }
+    .refresh-btn.is-loading .refresh-icon { animation: spin 800ms linear infinite; }
+    @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
     .search-wrap { position: relative; flex: 1; min-width: 200px; }
     .search-wrap::before { content: "⌕"; position: absolute; left: 16px; top: 8px; color: var(--muted); font-size: 1.55rem; }
     #searchInput { width: 100%; padding: 13px 16px 13px 44px; border: 1px solid var(--line); border-radius: 12px; outline: none; }
@@ -65,8 +71,8 @@
     .catalog-grid.list-view { display: grid; grid-template-columns: minmax(0, 1fr); gap: 8px; }
     .list-view .book-card { min-height: 0; min-width: 0; display: block; padding: 14px 15px; cursor: pointer; }
     .list-view .cover-thumb, .list-view .cover-placeholder { display: none; }
-    .list-view .book-title { display: block; font-size: .96rem; }
-    .list-view .book-author { margin-top: 4px; }
+    .list-view .book-title { display: block; font-size: .8rem; line-clamp: unset; -webkit-line-clamp: unset; max-height: none; }
+    .list-view .book-author { margin-top: 4px; line-clamp: unset; -webkit-line-clamp: unset; max-height: none; }
     .list-view .book-meta { margin-top: 8px; }
     .list-view .book-meta span:nth-child(n+2) { display: none; }
     .list-view .book-footer { display: flex; align-items: center; justify-content: space-between; margin-top: 12px; }
@@ -86,8 +92,8 @@
     .cover-title { position: relative; z-index: 1; max-width: 82%; }
     .cover-mark { position: relative; z-index: 1; font-size: .55rem; letter-spacing: .13em; text-transform: uppercase; opacity: .8; }
     
-    .book-title { color: var(--ink); font-size: 1rem; line-height: 1.25; overflow-wrap: break-word; word-break: break-word; }
-    .book-author { margin-top: 4px; color: var(--muted); font-size: .8rem; overflow-wrap: break-word; word-break: break-word; }
+    .book-title { color: var(--ink); font-size: .8rem; line-height: 1.25; overflow-wrap: break-word; word-break: break-word; display: -webkit-box; line-clamp: 2; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; max-height: 2.6em; }
+    .book-author { margin-top: 4px; color: var(--muted); font-size: .8rem; overflow-wrap: break-word; word-break: break-word; display: -webkit-box; line-clamp: 1; -webkit-line-clamp: 1; -webkit-box-orient: vertical; overflow: hidden; }
     .book-meta { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 10px; color: var(--muted); font-size: .72rem; }
     .book-meta span { padding: 4px 6px; border-radius: 6px; background: #f5f0eb; }
     .book-footer { display: flex; align-items: stretch; flex-direction: column; gap: 8px; margin-top: 16px; min-width: 0; }
@@ -127,9 +133,13 @@
     .size-select { padding: 4px 6px; font-size: .75rem; border: 1px solid var(--line); border-radius: 6px; background: #fff; margin-top: 4px; }
     .qty-input { width: 48px; padding: 5px; border: 1px solid var(--line); border-radius: 6px; text-align: center; }
     .remove-btn { border: 0; background: transparent; color: var(--muted); font-size: 1.15rem; cursor: pointer; }
+    .link-btn { border: 0; background: transparent; color: var(--red); font-size: .72rem; font-weight: 700; cursor: pointer; padding: 0; text-decoration: underline; }
+    .price-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+    .custom-price-tag { background: #f5f0eb; color: var(--ink); border-radius: 6px; padding: 2px 6px; font-size: .68rem; font-weight: 700; text-transform: uppercase; }
 
     .discount-row { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 14px; }
     .discount-row input { padding: 8px; border: 1px solid var(--line); border-radius: 6px; text-align: right; }
+    .minimum-order-note { margin-top: 10px; padding: 9px 11px; border-radius: 9px; background: #fdf3e4; color: #8a5a12; font-size: .76rem; font-weight: 600; }
     
     .total-row { display: flex; justify-content: space-between; align-items: baseline; padding: 16px 0; border-top: 1px solid var(--line); margin-top: 14px; }
     .cart-total { color: var(--red); font-size: 1.45rem; font-weight: 800; }
@@ -262,6 +272,9 @@
             <input type="search" id="searchInput" placeholder="Search by title or author..." oninput="filterCatalog()">
           </div>
           <button class="custom-btn" onclick="openCustomModal()">+ Custom Book / PDF</button>
+          <button class="refresh-btn" id="refreshCatalogButton" onclick="refreshCatalog()" aria-label="Refresh catalogue"><span class="refresh-icon" aria-hidden="true">⟳</span><span>Refresh catalogue</span></button>
+          <button class="refresh-btn" id="staffLoginButton" onclick="openStaffLoginModal()" aria-label="Staff login"><span aria-hidden="true">🔒</span><span>Staff login</span></button>
+          <button class="refresh-btn" id="staffLogoutButton" onclick="logoutStaff()" style="display:none;" aria-label="Log out of staff mode"><span aria-hidden="true">🔓</span><span>Staff mode · Log out</span></button>
           <div class="catalog-count" id="catalogCount" aria-live="polite">Loading catalogue...</div>
           <div class="view-toggle" aria-label="Catalogue view"><button id="gridViewButton" class="is-active" onclick="setCatalogueView('grid')">Thumbnails</button><button id="listViewButton" onclick="setCatalogueView('list')">List</button></div>
         </div>
@@ -290,7 +303,7 @@
           </div>
           
           <div class="discount-row">
-            <div>
+            <div id="discountRow" style="display:none;">
               <span class="field-label">Discount (Kshs)</span>
               <input type="number" id="discountInput" value="0" min="0" oninput="renderCart()">
             </div>
@@ -299,6 +312,8 @@
               <div id="cartSubtotal" style="font-weight: 700; margin-top: 8px;">Kshs 0.00</div>
             </div>
           </div>
+
+          <div id="minimumOrderNote" class="minimum-order-note" style="display:none;"></div>
 
           <div class="total-row">
             <span class="total-label">Total Quotation</span>
@@ -323,6 +338,19 @@
   <button id="cartFab" class="cart-fab is-empty" onclick="openCart()" aria-label="Open quotation cart" aria-expanded="false">
     <span class="cart-icon" aria-hidden="true">🛒</span><span class="cart-fab-label" id="cartFabLabel">Cart empty</span><span class="cart-badge" id="cartBadge">0</span>
   </button>
+
+  <div id="staffLoginModal" class="modal-overlay" role="dialog" aria-modal="true" aria-labelledby="staffLoginTitle">
+    <div class="modal-card">
+      <div class="modal-header">
+        <h3 id="staffLoginTitle">Staff Login</h3>
+        <button aria-label="Close staff login dialog" onclick="closeStaffLoginModal()" style="border:0; background:none; font-size:1.4rem; cursor:pointer;">&times;</button>
+      </div>
+      <div class="modal-body">
+        <label><span class="field-label">Staff Passcode</span><input type="password" id="staffPasswordInput" placeholder="Enter passcode" onkeydown="if (event.key === 'Enter') { event.preventDefault(); submitStaffLogin(); }"></label>
+        <button class="custom-btn" style="margin-top:10px; width:100%;" onclick="submitStaffLogin()">Log in</button>
+      </div>
+    </div>
+  </div>
 
   <div id="customModal" class="modal-overlay" role="dialog" aria-modal="true" aria-labelledby="customModalTitle">
     <div class="modal-card">
@@ -353,7 +381,7 @@
   </div>
 
   <div id="bookDetailModal" class="book-detail-modal" role="dialog" aria-modal="true" aria-labelledby="bookDetailTitle">
-    <article class="book-detail-card"><div class="book-detail-top"><div><div class="eyebrow">Book details</div><h2 id="bookDetailTitle"></h2></div><button class="drawer-close" onclick="closeBookDetails()" aria-label="Close book details">&times;</button></div><div class="book-detail-content"><div id="bookDetailCover"></div><div class="detail-list"><div class="detail-row"><span class="field-label">Author</span><strong id="bookDetailAuthor"></strong></div><div class="detail-row"><span class="field-label">Pages</span><strong id="bookDetailPages"></strong></div><div class="detail-row"><span class="field-label">Colour pages</span><strong id="bookDetailColor"></strong></div><div class="detail-row"><span class="field-label">Page size</span><strong id="bookDetailSize"></strong></div><div class="detail-row"><span class="field-label">Unit price</span><strong id="bookDetailPrice"></strong></div><button class="custom-btn" id="bookDetailAdd">Add to quote</button></div></div></article>
+    <article class="book-detail-card"><div class="book-detail-top"><div><div class="eyebrow">Book details</div><h2 id="bookDetailTitle"></h2></div><button class="drawer-close" onclick="closeBookDetails()" aria-label="Close book details">&times;</button></div><div class="book-detail-content"><div id="bookDetailCover"></div><div class="detail-list"><div class="detail-row"><span class="field-label">Author</span><strong id="bookDetailAuthor"></strong></div><div class="detail-row"><span class="field-label">Pages</span><strong id="bookDetailPages"></strong></div><div class="detail-row"><span class="field-label">Colour pages</span><strong id="bookDetailColor"></strong></div><div class="detail-row"><span class="field-label">Page size</span><strong id="bookDetailSize"></strong></div><div class="detail-row"><span class="field-label">Unit price</span><strong id="bookDetailPrice"></strong></div><button type="button" class="link-btn" id="bookDetailEditPrice" style="display:none; text-align:left;">Set special price</button><button class="custom-btn" id="bookDetailAdd">Add to quote</button></div></div></article>
   </div>
 
   <section id="printQuote" class="print-quote" aria-label="Printable quotation">
@@ -377,6 +405,7 @@
       <div class="print-total-line"><span>Subtotal</span><strong id="printSubtotal"></strong></div>
       <div class="print-total-line"><span>Discount</span><strong id="printDiscount"></strong></div>
       <div class="print-total-line final"><span>Total quotation</span><strong id="printTotal"></strong></div>
+      <div class="print-total-line" id="printMinimumNote" style="display:none;"><span>Minimum order amount applied</span></div>
     </div>
     <footer class="print-footer"><span>Payment Till No: 5675635</span><span>Production begins after receipt of payment · Delivery within 2 working days</span></footer>
   </section>
@@ -404,13 +433,42 @@
       "3": "A6 Size"
     };
 
+    let rawCatalog = [];
     let catalog = [];
     let cart = [];
     let catalogProgressTimer;
     let catalogueView = 'grid';
     const quotationNumber = `CAV-${new Date().toISOString().slice(0, 10).replace(/-/g, '')}-${Math.floor(1000 + Math.random() * 9000)}`;
+    const MINIMUM_ORDER_AMOUNT = 500;
 
-    window.addEventListener('load', loadCatalog);
+    // Client-side staff gate. Not a real security boundary (anyone can read the page source) -
+    // change this passcode and consider a proper backend check if that ever matters for this app.
+    const STAFF_PASSCODE = "Cavalry@2024";
+    const STAFF_SESSION_KEY = "cavalryStaffSession";
+    const SPECIAL_PRICES_KEY = "cavalrySpecialPrices";
+    let isStaff = sessionStorage.getItem(STAFF_SESSION_KEY) === 'true';
+    let specialPrices = loadSpecialPrices();
+
+    window.addEventListener('load', () => { loadCatalog(); updateStaffUI(); });
+
+    function loadSpecialPrices() {
+      try { return JSON.parse(localStorage.getItem(SPECIAL_PRICES_KEY) || '{}'); }
+      catch { return {}; }
+    }
+
+    function saveSpecialPrices() {
+      localStorage.setItem(SPECIAL_PRICES_KEY, JSON.stringify(specialPrices));
+    }
+
+    // Merges the permanent staff-set prices into the freshly fetched catalogue.
+    function applySpecialPrices(books) {
+      return books.map(book => {
+        const override = specialPrices[String(book.id)];
+        return override != null
+          ? { ...book, unitCost: Number(override), hasSpecialPrice: true }
+          : { ...book, hasSpecialPrice: false };
+      });
+    }
 
     function loadCatalog() {
         showCatalogProgress(8, 'Connecting to the catalogue...');
@@ -420,7 +478,8 @@
           const current = Number(progressBar.dataset.progress || 8);
           showCatalogProgress(Math.min(90, current + (current < 45 ? 7 : 3)), current < 35 ? 'Fetching catalogue data...' : 'Preparing book listings...');
         }, 350);
-        fetch(API_URL, { redirect: 'follow' })
+        // Cache-bust so a manual refresh always pulls the latest sheet data instead of a cached response.
+        fetch(`${API_URL}?t=${Date.now()}`, { redirect: 'follow', cache: 'no-store' })
             .then(res => {
             if (!res.ok) throw new Error('Network response was not ok');
             return res.json();
@@ -428,7 +487,8 @@
         .then(response => {
             if (response.status === 'success') { 
               showCatalogProgress(100, 'Catalogue ready');
-                catalog = sortCatalogue(response.data); 
+                rawCatalog = sortCatalogue(response.data);
+                catalog = applySpecialPrices(rawCatalog);
                 displayBooks(catalog); 
             } else {
                 showCatalogError('The catalogue could not be loaded: ' + (response.message || 'Unknown error'));
@@ -437,7 +497,105 @@
         .catch(err => {
             console.error('Catalogue Load Error:', err);
             showCatalogError('Check your connection and try again.');
-        });
+        })
+        .finally(() => setRefreshButtonLoading(false));
+    }
+
+    function refreshCatalog() {
+      setRefreshButtonLoading(true);
+      loadCatalog();
+    }
+
+    function setRefreshButtonLoading(isLoading) {
+      const button = document.getElementById('refreshCatalogButton');
+      if (!button) return;
+      button.disabled = isLoading;
+      button.classList.toggle('is-loading', isLoading);
+    }
+
+    function openStaffLoginModal() {
+      const modal = document.getElementById('staffLoginModal');
+      modal.style.display = 'flex';
+      const input = document.getElementById('staffPasswordInput');
+      input.value = '';
+      input.focus();
+    }
+
+    function closeStaffLoginModal() { document.getElementById('staffLoginModal').style.display = 'none'; }
+
+    function submitStaffLogin() {
+      const input = document.getElementById('staffPasswordInput');
+      if (input.value !== STAFF_PASSCODE) {
+        alert('Incorrect passcode. Please try again.');
+        input.value = '';
+        input.focus();
+        return;
+      }
+      isStaff = true;
+      sessionStorage.setItem(STAFF_SESSION_KEY, 'true');
+      closeStaffLoginModal();
+      updateStaffUI();
+    }
+
+    function logoutStaff() {
+      isStaff = false;
+      sessionStorage.removeItem(STAFF_SESSION_KEY);
+      updateStaffUI();
+    }
+
+    function updateStaffUI() {
+      const loginButton = document.getElementById('staffLoginButton');
+      const logoutButton = document.getElementById('staffLogoutButton');
+      const discountRow = document.getElementById('discountRow');
+      if (loginButton) loginButton.style.display = isStaff ? 'none' : 'inline-flex';
+      if (logoutButton) logoutButton.style.display = isStaff ? 'inline-flex' : 'none';
+      if (discountRow) discountRow.style.display = isStaff ? 'block' : 'none';
+      if (!isStaff) document.getElementById('discountInput').value = 0;
+      if (rawCatalog.length) {
+        const query = document.getElementById('searchInput').value.toLowerCase().trim();
+        displayBooks(query ? catalog.filter(b => `${b.title} ${b.author}`.toLowerCase().includes(query)) : catalog);
+      }
+      renderCart();
+    }
+
+    function getDiscountValue() {
+      if (!isStaff) return 0;
+      return Math.max(0, parseFloat(document.getElementById('discountInput').value) || 0);
+    }
+
+    // Staff-only: sets or clears the permanent catalogue price for a book, saved locally so it
+    // persists across sessions and applies to every quote, not just the current one.
+    function editSpecialPrice(bookId) {
+      if (!isStaff) return;
+      const book = rawCatalog.find(b => b.id === bookId);
+      if (!book) return;
+      const currentOverride = specialPrices[String(bookId)];
+      const promptValue = currentOverride != null ? currentOverride : book.unitCost;
+      const input = prompt(`Set a permanent special price (Kshs) for "${book.title}".\nLeave blank and press OK to clear the special price and use the standard catalogue price (Kshs. ${Number(book.unitCost).toFixed(2)}).`, Number(promptValue).toFixed(2));
+      if (input === null) return;
+      const trimmed = input.trim();
+      if (trimmed === '') {
+        delete specialPrices[String(bookId)];
+      } else {
+        const value = parseFloat(trimmed);
+        if (!Number.isFinite(value) || value < 0) { alert('Please enter a valid, non-negative price.'); return; }
+        specialPrices[String(bookId)] = value;
+      }
+      saveSpecialPrices();
+      catalog = applySpecialPrices(rawCatalog);
+      const query = document.getElementById('searchInput').value.toLowerCase().trim();
+      displayBooks(query ? catalog.filter(b => `${b.title} ${b.author}`.toLowerCase().includes(query)) : catalog);
+    }
+
+    function getUnitPrice(item) {
+      return Number(item.activeUnitCost);
+    }
+
+    function computeOrderTotals(subtotal, discount) {
+      const discounted = Math.max(0, subtotal - discount);
+      const minimumApplied = cart.length > 0 && discounted < MINIMUM_ORDER_AMOUNT;
+      const total = minimumApplied ? MINIMUM_ORDER_AMOUNT : discounted;
+      return { subtotal, discount, total, minimumApplied };
     }
 
     function showCatalogProgress(progress, status) {
@@ -488,7 +646,11 @@
             </div>
           </div>
           <div class="book-footer">
-            <div class="book-price">Kshs. ${Number(book.unitCost).toFixed(2)}</div>
+            <div class="price-row">
+              <div class="book-price">Kshs. ${Number(book.unitCost).toFixed(2)}</div>
+              ${book.hasSpecialPrice ? '<span class="custom-price-tag">Special price</span>' : ''}
+            </div>
+            ${isStaff ? `<button type="button" class="link-btn" onclick="event.stopPropagation(); editSpecialPrice(${book.id})">${book.hasSpecialPrice ? 'Edit special price' : 'Set special price'}</button>` : ''}
             <button class="add-btn" onclick="event.stopPropagation(); addToCart(${book.id})">Add to quote</button>
           </div>
         </article>
@@ -511,7 +673,10 @@
       document.getElementById('bookDetailPages').textContent = `${book.pages} pages`;
       document.getElementById('bookDetailColor').textContent = `${book.colorPages} colour pages`;
       document.getElementById('bookDetailSize').textContent = SIZE_LABELS[String(book.sizeCode)] || book.sizeLabel || 'Standard';
-      document.getElementById('bookDetailPrice').textContent = `Kshs. ${Number(book.unitCost).toLocaleString('en-US', { minimumFractionDigits: 2 })}`;
+      document.getElementById('bookDetailPrice').innerHTML = `Kshs. ${Number(book.unitCost).toLocaleString('en-US', { minimumFractionDigits: 2 })}${book.hasSpecialPrice ? ' <span class="custom-price-tag">Special price</span>' : ''}`;
+      const editPriceButton = document.getElementById('bookDetailEditPrice');
+      editPriceButton.style.display = isStaff ? 'inline' : 'none';
+      editPriceButton.onclick = () => editSpecialPrice(book.id);
       const cover = document.getElementById('bookDetailCover');
       cover.innerHTML = book.coverUrl ? `<img class="book-detail-cover" src="${formatDriveUrl(book.coverUrl)}" alt="${escapeHtml(book.title)} cover" onerror="this.replaceWith(createPlaceholder(this.alt.replace(/ cover$/, '')))" />` : createPlaceholderMarkup(book.title);
       const detailCover = cover.firstElementChild;
@@ -650,6 +815,7 @@
         container.innerHTML = '<div class="empty-state">Add a book to begin your quote.</div>'; 
         document.getElementById('cartSubtotal').innerText = 'Kshs 0.00'; 
         document.getElementById('cartTotal').innerText = 'Kshs 0.00'; 
+        document.getElementById('minimumOrderNote').style.display = 'none';
         updateCartFab();
         return; 
       }
@@ -658,14 +824,19 @@
       let subtotal = 0;
 
       cart.forEach(item => {
-        const itemTotal = item.activeUnitCost * item.quantity;
+        const unitPrice = getUnitPrice(item);
+        const itemTotal = unitPrice * item.quantity;
         subtotal += itemTotal;
+
+        const priceLabel = item.pricePending
+          ? 'Calculating backend price...'
+          : `@ Kshs. ${unitPrice.toFixed(2)}${item.hasSpecialPrice ? ' <span class="custom-price-tag">Special price</span>' : ''}`;
 
         html += `
           <div class="cart-item">
             <div>
               <div class="cart-item-title">${escapeHtml(item.title)}</div>
-              <div style="color:var(--muted); font-size:.75rem;">${item.pricePending ? 'Calculating backend price...' : `@ Kshs. ${Number(item.activeUnitCost).toFixed(2)}`}</div>
+              <div class="price-row" style="color:var(--muted); font-size:.75rem;"><span>${priceLabel}</span></div>
               
               <select class="size-select" onchange="updateSize(${item.id}, this.value)">
                 <option value="1" ${item.selectedSizeCode === "1" ? "selected" : ""}>A5 Size</option>
@@ -684,12 +855,15 @@
         `;
       });
 
-      const discount = parseFloat(document.getElementById('discountInput').value) || 0;
-      const total = Math.max(0, subtotal - discount);
+      const discount = getDiscountValue();
+      const { total, minimumApplied } = computeOrderTotals(subtotal, discount);
 
       container.innerHTML = html;
       document.getElementById('cartSubtotal').innerText = 'Kshs ' + subtotal.toLocaleString('en-US', {minimumFractionDigits: 2});
       document.getElementById('cartTotal').innerText = 'Kshs ' + total.toLocaleString('en-US', {minimumFractionDigits: 2});
+      const minimumNote = document.getElementById('minimumOrderNote');
+      minimumNote.style.display = minimumApplied ? 'block' : 'none';
+      minimumNote.textContent = minimumApplied ? `Minimum order amount of Kshs ${MINIMUM_ORDER_AMOUNT.toFixed(2)} applies to this quote.` : '';
       updateCartFab();
     }
 
@@ -698,9 +872,9 @@
 
       const client = document.getElementById('clientName').value.trim() || 'Valued Client';
       const phone = document.getElementById('clientPhone').value.trim();
-      const discount = Math.max(0, parseFloat(document.getElementById('discountInput').value) || 0);
-      const subtotal = cart.reduce((sum, item) => sum + (item.activeUnitCost * item.quantity), 0);
-      const total = Math.max(0, subtotal - discount);
+      const discount = getDiscountValue();
+      const subtotal = cart.reduce((sum, item) => sum + (getUnitPrice(item) * item.quantity), 0);
+      const { total, minimumApplied } = computeOrderTotals(subtotal, discount);
 
       document.getElementById('printQuoteSerial').textContent = `Quote ${quotationNumber}`;
       document.getElementById('printQuoteDate').textContent = `Issued ${new Date().toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' })}`;
@@ -708,13 +882,15 @@
       document.getElementById('printClientName').textContent = client;
       document.getElementById('printClientPhone').textContent = phone || 'Phone not provided';
       document.getElementById('printQuoteItems').innerHTML = cart.map((item, index) => {
-        const itemTotal = item.activeUnitCost * item.quantity;
+        const unitPrice = getUnitPrice(item);
+        const itemTotal = unitPrice * item.quantity;
         const sizeLabel = SIZE_LABELS[String(item.selectedSizeCode)] || 'Standard';
-        return `<tr><td>${index + 1}</td><td><div class="print-item-title">${escapeHtml(item.title)}</div><div class="print-item-detail">${sizeLabel} · ${item.pages} pages${item.author ? ` · ${escapeHtml(item.author)}` : ''}</div></td><td>${item.quantity}</td><td>Kshs. ${Number(item.activeUnitCost).toLocaleString('en-US', { minimumFractionDigits: 2 })}</td><td>Kshs. ${itemTotal.toLocaleString('en-US', { minimumFractionDigits: 2 })}</td></tr>`;
+        return `<tr><td>${index + 1}</td><td><div class="print-item-title">${escapeHtml(item.title)}</div><div class="print-item-detail">${sizeLabel} · ${item.pages} pages${item.author ? ` · ${escapeHtml(item.author)}` : ''}</div></td><td>${item.quantity}</td><td>Kshs. ${unitPrice.toLocaleString('en-US', { minimumFractionDigits: 2 })}</td><td>Kshs. ${itemTotal.toLocaleString('en-US', { minimumFractionDigits: 2 })}</td></tr>`;
       }).join('');
       document.getElementById('printSubtotal').textContent = `Kshs. ${subtotal.toLocaleString('en-US', { minimumFractionDigits: 2 })}`;
       document.getElementById('printDiscount').textContent = `Kshs. ${discount.toLocaleString('en-US', { minimumFractionDigits: 2 })}`;
       document.getElementById('printTotal').textContent = `Kshs. ${total.toLocaleString('en-US', { minimumFractionDigits: 2 })}`;
+      document.getElementById('printMinimumNote').style.display = minimumApplied ? 'flex' : 'none';
       window.print();
     }
 
@@ -792,22 +968,24 @@
     function printQuotationContent() {
       const client = document.getElementById('clientName').value.trim() || 'Valued Client';
       const phone = document.getElementById('clientPhone').value.trim();
-      const discount = Math.max(0, parseFloat(document.getElementById('discountInput').value) || 0);
-      const subtotal = cart.reduce((sum, item) => sum + (item.activeUnitCost * item.quantity), 0);
-      const total = Math.max(0, subtotal - discount);
+      const discount = getDiscountValue();
+      const subtotal = cart.reduce((sum, item) => sum + (getUnitPrice(item) * item.quantity), 0);
+      const { total, minimumApplied } = computeOrderTotals(subtotal, discount);
       document.getElementById('printQuoteSerial').textContent = `Quote ${quotationNumber}`;
       document.getElementById('printQuoteDate').textContent = `Issued ${new Date().toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' })}`;
       document.getElementById('printQuoteNumber').textContent = quotationNumber;
       document.getElementById('printClientName').textContent = client;
       document.getElementById('printClientPhone').textContent = phone || 'Phone not provided';
       document.getElementById('printQuoteItems').innerHTML = cart.map((item, index) => {
-        const itemTotal = item.activeUnitCost * item.quantity;
+        const unitPrice = getUnitPrice(item);
+        const itemTotal = unitPrice * item.quantity;
         const sizeLabel = SIZE_LABELS[String(item.selectedSizeCode)] || 'Standard';
-        return `<tr><td>${index + 1}</td><td><div class="print-item-title">${escapeHtml(item.title)}</div><div class="print-item-detail">${sizeLabel} · ${item.pages} pages${item.author ? ` · ${escapeHtml(item.author)}` : ''}</div></td><td>${item.quantity}</td><td>Kshs. ${Number(item.activeUnitCost).toLocaleString('en-US', { minimumFractionDigits: 2 })}</td><td>Kshs. ${itemTotal.toLocaleString('en-US', { minimumFractionDigits: 2 })}</td></tr>`;
+        return `<tr><td>${index + 1}</td><td><div class="print-item-title">${escapeHtml(item.title)}</div><div class="print-item-detail">${sizeLabel} · ${item.pages} pages${item.author ? ` · ${escapeHtml(item.author)}` : ''}</div></td><td>${item.quantity}</td><td>Kshs. ${unitPrice.toLocaleString('en-US', { minimumFractionDigits: 2 })}</td><td>Kshs. ${itemTotal.toLocaleString('en-US', { minimumFractionDigits: 2 })}</td></tr>`;
       }).join('');
       document.getElementById('printSubtotal').textContent = `Kshs. ${subtotal.toLocaleString('en-US', { minimumFractionDigits: 2 })}`;
       document.getElementById('printDiscount').textContent = `Kshs. ${discount.toLocaleString('en-US', { minimumFractionDigits: 2 })}`;
       document.getElementById('printTotal').textContent = `Kshs. ${total.toLocaleString('en-US', { minimumFractionDigits: 2 })}`;
+      document.getElementById('printMinimumNote').style.display = minimumApplied ? 'flex' : 'none';
     }
 
     function shareOnWhatsApp() {
@@ -815,19 +993,20 @@
   
   const client = document.getElementById('clientName').value.trim() || 'Valued Client';
   const phoneInput = document.getElementById('clientPhone').value.trim();
-  const discount = parseFloat(document.getElementById('discountInput').value) || 0;
+  const discount = getDiscountValue();
   
-  const subtotal = cart.reduce((sum, item) => sum + (item.activeUnitCost * item.quantity), 0);
-  const finalTotal = Math.max(0, subtotal - discount);
+  const subtotal = cart.reduce((sum, item) => sum + (getUnitPrice(item) * item.quantity), 0);
+  const { total: finalTotal, minimumApplied } = computeOrderTotals(subtotal, discount);
 
   const today = new Date().toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
 
   // Format book list
   const itemBlocks = cart.map((item, index) => {
     const sizeLabel = SIZE_LABELS[String(item.selectedSizeCode)] || "Standard";
-    const lineTotal = item.activeUnitCost * item.quantity;
+    const unitPrice = getUnitPrice(item);
+    const lineTotal = unitPrice * item.quantity;
     return `(${index + 1}). ${item.quantity} copies of "${item.title}"\n` +
-           `     ${sizeLabel} | @ Kshs. ${Number(item.activeUnitCost).toFixed(2)}\n` +
+           `     ${sizeLabel} | @ Kshs. ${unitPrice.toFixed(2)}\n` +
            `     Total: Kshs. ${lineTotal.toLocaleString('en-US', {minimumFractionDigits: 2})}`;
   });
 
@@ -863,7 +1042,7 @@ ${itemBlocks.join('\n\n')}
 
 ----------------------------------
 Subtotal: Kshs. ${subtotal.toLocaleString('en-US', {minimumFractionDigits: 2})}
-Discount: Kshs. ${discount.toLocaleString('en-US', {minimumFractionDigits: 2})}
+Discount: Kshs. ${discount.toLocaleString('en-US', {minimumFractionDigits: 2})}${minimumApplied ? `\nMinimum order amount of Kshs. ${MINIMUM_ORDER_AMOUNT.toFixed(2)} applied` : ''}
 *TOTAL QUOTATION: Kshs. ${finalTotal.toLocaleString('en-US', {minimumFractionDigits: 2})}*
 ----------------------------------
 
@@ -894,11 +1073,15 @@ Discount: Kshs. ${discount.toLocaleString('en-US', {minimumFractionDigits: 2})}
     document.getElementById('customModal').addEventListener('click', event => {
       if (event.target.id === 'customModal') closeCustomModal();
     });
+    document.getElementById('staffLoginModal').addEventListener('click', event => {
+      if (event.target.id === 'staffLoginModal') closeStaffLoginModal();
+    });
     document.getElementById('bookDetailModal').addEventListener('click', event => {
       if (event.target.id === 'bookDetailModal') closeBookDetails();
     });
     document.addEventListener('keydown', event => {
       if (event.key === 'Escape') closeCustomModal();
+      if (event.key === 'Escape') closeStaffLoginModal();
       if (event.key === 'Escape') closeCart();
       if (event.key === 'Escape') closeBookDetails();
     });
