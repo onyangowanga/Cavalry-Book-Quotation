@@ -40,7 +40,7 @@
         <div class="catalog-toolbar">
           <button class="custom-btn" onclick="openCustomModal()">+ Quote Other Book/ PDF</button>
           <div class="search-wrap">
-            <input type="search" id="searchInput" placeholder="Search our catalogue..." oninput="filterCatalog()">
+            <input type="search" id="searchInput" name="catalogSearchQuery"  placeholder="Search our catalogue..." oninput="filterCatalog()" autocomplete="off" data-lpignore="true" data-1p-ignore="true" data-form-type="other">
           </div>
           <div class="catalog-actions">
             <button class="refresh-btn" id="refreshCatalogButton" onclick="refreshCatalog()" aria-label="Refresh catalogue"><span class="refresh-icon" aria-hidden="true">⟳</span><span>Refresh catalogue</span></button>
