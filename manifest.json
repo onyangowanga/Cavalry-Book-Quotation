@@ -1,6 +1,6 @@
 {
   "name": "Cavalry Publishers Quote Builder",
-  "short_name": "Cavalry Quotes",
+  "short_name": "Cavalry Publishers",
   "description": "Build and share printing quotations from the Cavalry Publishers catalogue.",
   "start_url": "./",
   "scope": "./",
