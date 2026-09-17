@@ -38,13 +38,15 @@
     <div class="content">
       <section class="catalog-panel">
         <div class="catalog-toolbar">
+          <button class="custom-btn" onclick="openCustomModal()">+ Quote Other Book/ PDF</button>
           <div class="search-wrap">
-            <input type="search" id="searchInput" placeholder="Search by title or author..." oninput="filterCatalog()">
+            <input type="search" id="searchInput" placeholder="Search our catalogue..." oninput="filterCatalog()">
           </div>
-          <button class="custom-btn" onclick="openCustomModal()">+ Custom Book / PDF</button>
-          <button class="refresh-btn" id="refreshCatalogButton" onclick="refreshCatalog()" aria-label="Refresh catalogue"><span class="refresh-icon" aria-hidden="true">⟳</span><span>Refresh catalogue</span></button>
+          <div class="catalog-actions">
+            <button class="refresh-btn" id="refreshCatalogButton" onclick="refreshCatalog()" aria-label="Refresh catalogue"><span class="refresh-icon" aria-hidden="true">⟳</span><span>Refresh catalogue</span></button>
+            <div class="view-toggle" aria-label="Catalogue view"><button id="gridViewButton" class="is-active" onclick="setCatalogueView('grid')">Thumbnails</button><button id="listViewButton" onclick="setCatalogueView('list')">List</button></div>
+          </div>
           <div class="catalog-count" id="catalogCount" aria-live="polite">Loading catalogue...</div>
-          <div class="view-toggle" aria-label="Catalogue view"><button id="gridViewButton" class="is-active" onclick="setCatalogueView('grid')">Thumbnails</button><button id="listViewButton" onclick="setCatalogueView('list')">List</button></div>
         </div>
         <details class="catalog-dropdown" open>
           <summary>Books catalogue</summary>

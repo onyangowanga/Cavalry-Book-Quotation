@@ -34,6 +34,8 @@ h1 { font-weight: 700; font-size: clamp(1.8rem, 3vw, 2.45rem); line-height: 1.04
 .catalog-dropdown .catalog-grid { padding: 14px 0 2px; }
 
 .catalog-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 22px; flex-wrap: wrap; }
+.catalog-actions { display: inline-flex; align-items: stretch; gap: 12px; white-space: nowrap; }
+.catalog-actions > .refresh-btn, .catalog-actions > .view-toggle { flex: 1; }
 .view-toggle { display: inline-flex; gap: 3px; padding: 3px; border: 1px solid var(--line); border-radius: 10px; background: #f5f0eb; }
 .view-toggle button { border: 0; border-radius: 7px; padding: 8px 11px; background: transparent; color: var(--muted); font-size: .76rem; font-weight: 800; cursor: pointer; }
 .view-toggle button.is-active { background: #fff; color: var(--ink); box-shadow: 0 2px 7px rgba(36,35,42,.1); }
@@ -57,7 +59,7 @@ h1 { font-weight: 700; font-size: clamp(1.8rem, 3vw, 2.45rem); line-height: 1.04
 .list-view .book-meta { margin-top: 8px; }
 .list-view .book-meta span { display: block; }
 .list-view .book-footer { display: flex; align-items: center; justify-content: space-between; margin-top: 12px; }
-.list-view .add-btn { padding: 7px 10px; }
+.list-view .add-btn { padding: 5.25px 7.5px; }
 .book-card { cursor: pointer; }
 
 /* Cover Image & Dynamic Fallback Placeholder Styles */
@@ -81,9 +83,9 @@ h1 { font-weight: 700; font-size: clamp(1.8rem, 3vw, 2.45rem); line-height: 1.04
 .book-price { color: var(--red); font-weight: 800; font-size: .8rem; min-width: 0; overflow-wrap: break-word; }
 
 .add-btn, .custom-btn, .whatsapp-btn, .print-btn { border: 0; border-radius: 9px; color: #fff; font-weight: 700; cursor: pointer; }
-.add-btn { padding: 8px 12px; background: var(--ink); font-size: .8rem; }
+.add-btn { padding: 6px 9px; background: var(--ink); font-size: .6rem; }
 .add-btn:hover { background: var(--red); }
-.custom-btn { background: var(--red); padding: 12px 16px; font-size: .85rem; }
+.custom-btn { background: var(--red); padding: 12px 12px; font-size: .85rem; }
 
 /* Floating cart drawer */
 .cart-fab { position: fixed; right: 24px; top: 24px; z-index: 80; display: inline-flex; align-items: center; gap: 10px; min-height: 58px; max-width: calc(100vw - 48px); padding: 0 18px; border: 0; border-radius: 999px; background: var(--ink); color: #fff; box-shadow: 0 14px 30px rgba(36, 35, 42, .24); font-weight: 800; cursor: pointer; }
@@ -206,7 +208,10 @@ h1 { font-weight: 700; font-size: clamp(1.8rem, 3vw, 2.45rem); line-height: 1.04
   .catalog-toolbar > * { max-width: 100%; }
   .search-wrap { min-width: 0; width: 100%; }
   .custom-btn { width: 100%; }
-  .view-toggle { align-self: flex-start; }
+  .catalog-actions { width: 100%; }
+  .catalog-actions > .refresh-btn, .catalog-actions > .view-toggle { min-width: 0; }
+  .catalog-count { width: 100%; text-align: center; overflow: hidden; text-overflow: ellipsis; }
+  .view-toggle button { flex: 1; }
   .catalog-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 9px; }
   .book-card { min-height: 110px; padding: 6px; }
   .cover-thumb, .cover-placeholder { height: 56px; }
