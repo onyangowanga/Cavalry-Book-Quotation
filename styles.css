@@ -55,7 +55,7 @@ h1 { font-weight: 700; font-size: clamp(1.8rem, 3vw, 2.45rem); line-height: 1.04
 .list-view .book-title { display: block; font-size: .8rem; line-clamp: unset; -webkit-line-clamp: unset; max-height: none; }
 .list-view .book-author { margin-top: 4px; line-clamp: unset; -webkit-line-clamp: unset; max-height: none; }
 .list-view .book-meta { margin-top: 8px; }
-.list-view .book-meta span:nth-child(n+2) { display: none; }
+.list-view .book-meta span { display: block; }
 .list-view .book-footer { display: flex; align-items: center; justify-content: space-between; margin-top: 12px; }
 .list-view .add-btn { padding: 7px 10px; }
 .book-card { cursor: pointer; }
@@ -75,7 +75,7 @@ h1 { font-weight: 700; font-size: clamp(1.8rem, 3vw, 2.45rem); line-height: 1.04
 
 .book-title { color: var(--ink); font-size: .9rem; line-height: 1.25; overflow-wrap: break-word; word-break: break-word; display: -webkit-box; line-clamp: 2; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; max-height: 2.6em; }
 .book-author { margin-top: 4px; color: var(--muted); font-size: .8rem; overflow-wrap: break-word; word-break: break-word; display: -webkit-box; line-clamp: 1; -webkit-line-clamp: 1; -webkit-box-orient: vertical; overflow: hidden; }
-.book-meta { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 10px; color: var(--muted); font-size: .72rem; }
+.book-meta { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; margin-top: 10px; color: var(--muted); font-size: .72rem; }
 .book-meta span { padding: 4px 6px; border-radius: 6px; background: #f5f0eb; }
 .book-footer { display: flex; align-items: stretch; flex-direction: column; gap: 8px; margin-top: 16px; min-width: 0; }
 .book-price { color: var(--red); font-weight: 800; font-size: .8rem; min-width: 0; overflow-wrap: break-word; }

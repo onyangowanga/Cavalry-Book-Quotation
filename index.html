@@ -27,8 +27,10 @@
       </div>
       <div class="intro">
         <div class="eyebrow">Cavalry Publishers</div>
-        <h2>Build a quote<br>in a few clicks.</h2>
-        <p>Browse the catalogue, adjust sizes and quantities, and send clean quotes straight to WhatsApp.</p>
+        <h2>Build a quote in a few clicks.</h2>
+        <p>Find your book, and get an instant quote on WhatsApp</p>
+        <button class="refresh-btn" id="staffLoginButton" onclick="openStaffLoginModal()" aria-label="Admin login"><span aria-hidden="true">🔒</span><span>Admin login</span></button>
+        <button class="refresh-btn" id="staffLogoutButton" onclick="logoutStaff()" style="display:none;" aria-label="Log out of staff mode"><span aria-hidden="true">🔓</span><span>Admin mode · Log out</span></button>
       </div>
     </header>
 
@@ -40,8 +42,6 @@
           </div>
           <button class="custom-btn" onclick="openCustomModal()">+ Custom Book / PDF</button>
           <button class="refresh-btn" id="refreshCatalogButton" onclick="refreshCatalog()" aria-label="Refresh catalogue"><span class="refresh-icon" aria-hidden="true">⟳</span><span>Refresh catalogue</span></button>
-          <button class="refresh-btn" id="staffLoginButton" onclick="openStaffLoginModal()" aria-label="Staff login"><span aria-hidden="true">🔒</span><span>Staff login</span></button>
-          <button class="refresh-btn" id="staffLogoutButton" onclick="logoutStaff()" style="display:none;" aria-label="Log out of staff mode"><span aria-hidden="true">🔓</span><span>Staff mode · Log out</span></button>
           <div class="catalog-count" id="catalogCount" aria-live="polite">Loading catalogue...</div>
           <div class="view-toggle" aria-label="Catalogue view"><button id="gridViewButton" class="is-active" onclick="setCatalogueView('grid')">Thumbnails</button><button id="listViewButton" onclick="setCatalogueView('list')">List</button></div>
         </div>

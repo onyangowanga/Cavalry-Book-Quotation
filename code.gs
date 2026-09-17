@@ -1,4 +1,10 @@
-const STAFF_PASSCODE = 'Cavalry@2024';
+function getStaffPassword(ss) {
+  const securitySheet = ss.getSheetByName('security');
+  if (!securitySheet) {
+    throw new Error("Tab named 'security' not found.");
+  }
+  return String(securitySheet.getRange('A1').getDisplayValue() || '').trim();
+}
 
 /**
  * Reads parameters directly from the 'Parameters' tab and returns:
@@ -157,6 +163,15 @@ function doPost(e) {
   try {
     const ss = SpreadsheetApp.getActiveSpreadsheet();
     const postData = JSON.parse(e.postData.contents);
+
+    if (postData.action === 'login') {
+      const configuredPassword = getStaffPassword(ss);
+      const suppliedPassword = String(postData.password || '').trim();
+      return ContentService
+        .createTextOutput(JSON.stringify({ status: suppliedPassword && suppliedPassword === configuredPassword ? 'success' : 'error', message: suppliedPassword && suppliedPassword === configuredPassword ? 'Login successful.' : 'Incorrect password.' }))
+        .setMimeType(ContentService.MimeType.JSON);
+    }
+
     const params = getParametersFromSheet(ss);
 
     // -------------------------------------------------------------
@@ -196,7 +211,7 @@ function doPost(e) {
 
     // ROUTE 3: Save or clear a permanent special catalogue price in the books sheet
     if (postData.action === 'set_special_price') {
-      if (postData.staffPasscode !== STAFF_PASSCODE) {
+      if (String(postData.staffPassword || '').trim() !== getStaffPassword(ss)) {
         return ContentService
           .createTextOutput(JSON.stringify({ status: 'error', message: 'Staff authorization required.' }))
           .setMimeType(ContentService.MimeType.JSON);

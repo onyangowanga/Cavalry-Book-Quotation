@@ -28,11 +28,8 @@ let catalogueView = 'grid';
 const quotationNumber = `CAV-${new Date().toISOString().slice(0, 10).replace(/-/g, '')}-${Math.floor(1000 + Math.random() * 9000)}`;
 const MINIMUM_ORDER_AMOUNT = 500;
 
-// Client-side staff gate. Not a real security boundary (anyone can read the page source) -
-// change this passcode and consider a proper backend check if that ever matters for this app.
-const STAFF_PASSCODE = "Cavalry@2024";
-const STAFF_SESSION_KEY = "cavalryStaffSession";
-let isStaff = sessionStorage.getItem(STAFF_SESSION_KEY) === 'true';
+let isStaff = false;
+let staffPassword = '';
 
 window.addEventListener('load', () => { loadCatalog(); updateStaffUI(); });
 
@@ -89,23 +86,37 @@ function openStaffLoginModal() {
 
 function closeStaffLoginModal() { document.getElementById('staffLoginModal').style.display = 'none'; }
 
-function submitStaffLogin() {
+async function submitStaffLogin() {
   const input = document.getElementById('staffPasswordInput');
-  if (input.value !== STAFF_PASSCODE) {
-    alert('Incorrect passcode. Please try again.');
-    input.value = '';
+  const password = input.value;
+  if (!password) {
+    alert('Please enter the staff password.');
     input.focus();
     return;
   }
-  isStaff = true;
-  sessionStorage.setItem(STAFF_SESSION_KEY, 'true');
-  closeStaffLoginModal();
-  updateStaffUI();
+  try {
+    const response = await fetch(API_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+      body: JSON.stringify({ action: 'login', password })
+    });
+    const result = await response.json();
+    if (result.status !== 'success') throw new Error(result.message || 'Incorrect password.');
+    staffPassword = password;
+    isStaff = true;
+    closeStaffLoginModal();
+    updateStaffUI();
+  } catch (error) {
+    console.error('Staff login failed:', error);
+    alert('Incorrect password or login service unavailable.');
+    input.value = '';
+    input.focus();
+  }
 }
 
 function logoutStaff() {
   isStaff = false;
-  sessionStorage.removeItem(STAFF_SESSION_KEY);
+  staffPassword = '';
   updateStaffUI();
 }
 
@@ -147,7 +158,7 @@ async function editSpecialPrice(bookId) {
     const response = await fetch(API_URL, {
       method: 'POST',
       headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-      body: JSON.stringify({ action: 'set_special_price', bookId, specialPrice, staffPasscode: STAFF_PASSCODE })
+      body: JSON.stringify({ action: 'set_special_price', bookId, specialPrice, staffPassword })
     });
     const result = await response.json();
     if (result.status !== 'success') throw new Error(result.message || 'The special price could not be saved.');
@@ -212,7 +223,6 @@ function displayBooks(books) {
         <div class="book-author">${escapeHtml(book.author)}</div>
         <div class="book-meta">
           <span>${book.pages} pgs</span>
-          <span>${book.colorPages} color</span>
           <span>${escapeHtml(SIZE_LABELS[String(book.sizeCode)] || book.sizeLabel)}</span>
         </div>
       </div>
