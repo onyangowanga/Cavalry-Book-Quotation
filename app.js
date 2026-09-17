@@ -32,6 +32,7 @@ let isStaff = false;
 let staffPassword = '';
 let offsetHistory = [];
 let activeAppTab = 'catalogue';
+let checkoutReference = '';
 
 const OFFSET_PAPER_COSTS = {
   'Bond 70': 1100,
@@ -101,20 +102,34 @@ function openStaffLoginModal() {
   const modal = document.getElementById('staffLoginModal');
   modal.style.display = 'flex';
   const input = document.getElementById('staffPasswordInput');
+  const checkbox = document.getElementById('showStaffPassword');
   input.value = '';
+  input.type = 'password';
+  checkbox.checked = false;
   input.focus();
 }
 
 function closeStaffLoginModal() { document.getElementById('staffLoginModal').style.display = 'none'; }
 
+function toggleStaffPasswordVisibility() {
+  const input = document.getElementById('staffPasswordInput');
+  const checkbox = document.getElementById('showStaffPassword');
+  input.type = checkbox.checked ? 'text' : 'password';
+}
+
 async function submitStaffLogin() {
   const input = document.getElementById('staffPasswordInput');
+  const button = document.getElementById('staffLoginSubmitButton');
+  const label = button.querySelector('.login-button-label');
   const password = input.value;
   if (!password) {
     alert('Please enter the staff password.');
     input.focus();
     return;
   }
+  button.disabled = true;
+  button.classList.add('is-loading');
+  label.textContent = 'Signing in...';
   try {
     const response = await fetch(API_URL, {
       method: 'POST',
@@ -132,6 +147,10 @@ async function submitStaffLogin() {
     alert('Incorrect password or login service unavailable.');
     input.value = '';
     input.focus();
+  } finally {
+    button.disabled = false;
+    button.classList.remove('is-loading');
+    label.textContent = 'Log in';
   }
 }
 
@@ -776,6 +795,121 @@ function focusCheckout() {
   document.getElementById('clientName').focus();
 }
 
+function getCurrentOrderSnapshot() {
+  const discount = getDiscountValue();
+  const subtotal = cart.reduce((sum, item) => sum + (getUnitPrice(item) * item.quantity), 0);
+  const totals = computeOrderTotals(subtotal, discount);
+  return {
+    clientName: document.getElementById('clientName').value.trim() || 'Valued Client',
+    clientPhone: document.getElementById('clientPhone').value.trim(),
+    items: cart.map(item => ({
+      title: item.title,
+      quantity: item.quantity,
+      unitPrice: getUnitPrice(item),
+      total: getUnitPrice(item) * item.quantity,
+      mode: getProductionMode(item),
+      size: SIZE_LABELS[String(item.selectedSizeCode)] || 'Standard',
+      pages: item.pages
+    })),
+    ...totals
+  };
+}
+
+function createCheckoutReference() {
+  return `INV-${Date.now().toString(36).toUpperCase().slice(-6)}`;
+}
+
+function renderCheckoutSummary(order) {
+  document.getElementById('checkoutReference').textContent = checkoutReference;
+  document.getElementById('checkoutSummary').innerHTML = order.items.map(item => `
+    <div class="checkout-summary-item">
+      <div><strong>${escapeHtml(item.title)}</strong><small>${item.quantity} × Kshs. ${item.unitPrice.toLocaleString('en-US', { minimumFractionDigits: 2 })} · ${item.mode === 'mass' ? 'Mass' : 'Sample'} · ${escapeHtml(item.size)} · ${item.pages} pages</small></div>
+      <strong>Kshs. ${item.total.toLocaleString('en-US', { minimumFractionDigits: 2 })}</strong>
+    </div>
+  `).join('');
+  document.getElementById('checkoutTotal').textContent = `Kshs. ${order.total.toLocaleString('en-US', { minimumFractionDigits: 2 })}`;
+}
+
+function openCheckoutModal() {
+  if (!cart.length) {
+    alert('Add at least one book to your quote first.');
+    return;
+  }
+  checkoutReference = createCheckoutReference();
+  renderCheckoutSummary(getCurrentOrderSnapshot());
+  document.getElementById('checkoutStatus').textContent = '';
+  document.getElementById('checkoutStatus').className = 'checkout-status';
+  document.getElementById('checkoutModal').style.display = 'flex';
+}
+
+function closeCheckoutModal() { document.getElementById('checkoutModal').style.display = 'none'; }
+
+function togglePaymentFields() {
+  const method = document.querySelector('input[name="paymentMethod"]:checked').value;
+  document.getElementById('mpesaFields').hidden = method !== 'mpesa';
+  document.getElementById('paybillFields').hidden = method !== 'paybill';
+}
+
+function setCheckoutStatus(message, type) {
+  const status = document.getElementById('checkoutStatus');
+  status.textContent = message;
+  status.className = `checkout-status${type ? ` is-${type}` : ''}`;
+}
+
+async function submitCheckoutPayment() {
+  if (!cart.length) return;
+  const method = document.querySelector('input[name="paymentMethod"]:checked').value;
+  const phone = document.getElementById('checkoutMpesaPhone').value.trim();
+  const transactionCode = document.getElementById('checkoutPaybillCode').value.trim().toUpperCase();
+  if (method === 'mpesa' && phone.replace(/\D/g, '').length < 10) {
+    setCheckoutStatus('Enter a valid M-Pesa phone number.', 'error');
+    return;
+  }
+  if (method === 'paybill' && !transactionCode) {
+    setCheckoutStatus('Enter the Equity transaction code after payment.', 'error');
+    return;
+  }
+  const order = getCurrentOrderSnapshot();
+  setCheckoutStatus('Submitting your order for payment verification...', '');
+  try {
+    const response = await fetch(API_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+      body: JSON.stringify({
+        action: 'submit_order',
+        quotationNumber: checkoutReference,
+        paymentMethod: method,
+        paymentPhone: method === 'mpesa' ? phone : '',
+        transactionCode: method === 'paybill' ? transactionCode : '',
+        clientName: order.clientName,
+        clientPhone: order.clientPhone,
+        itemsSummary: order.items.map(item => `${item.quantity}x ${item.title} (${item.mode})`).join('; '),
+        subtotal: order.subtotal,
+        discount: order.discount,
+        total: order.total
+      })
+    });
+    const result = await response.json();
+    if (result.status !== 'success') throw new Error(result.message || 'Order submission failed.');
+    setCheckoutStatus(method === 'mpesa' ? 'Order submitted. Complete the M-Pesa prompt or payment verification.' : 'Order submitted. Your transaction code will be verified.', 'success');
+  } catch (error) {
+    console.error('Checkout submission failed:', error);
+    setCheckoutStatus('The order could not be submitted. Please try again or send it to WhatsApp.', 'error');
+  }
+}
+
+function buildCheckoutWhatsAppMessage(order) {
+  const itemLines = order.items.map((item, index) => `${index + 1}. ${item.quantity} × ${item.title}\n   ${item.mode === 'mass' ? 'Mass' : 'Sample'} | ${item.size} | ${item.pages} pages | Kshs. ${item.unitPrice.toFixed(2)} each\n   Amount: Kshs. ${item.total.toLocaleString('en-US', { minimumFractionDigits: 2 })}`);
+  return `*CAVALRY PUBLISHERS ORDER*\nReference: ${checkoutReference}\nClient: ${order.clientName}\nPhone: ${order.clientPhone || 'Not provided'}\n\n${itemLines.join('\n\n')}\n\nSubtotal: Kshs. ${order.subtotal.toLocaleString('en-US', { minimumFractionDigits: 2 })}\nDiscount: Kshs. ${order.discount.toLocaleString('en-US', { minimumFractionDigits: 2 })}\n*TOTAL: Kshs. ${order.total.toLocaleString('en-US', { minimumFractionDigits: 2 })}*\n\nPlease confirm payment instructions and production details.`;
+}
+
+function sendCheckoutToWhatsApp() {
+  if (!cart.length) return;
+  if (!checkoutReference) checkoutReference = createCheckoutReference();
+  const order = getCurrentOrderSnapshot();
+  window.open(`https://wa.me/${COMPANY_WHATSAPP}?text=${encodeURIComponent(buildCheckoutWhatsAppMessage(order))}`, '_blank');
+}
+
 function updateCartFab() {
   const itemCount = cart.reduce((total, item) => total + item.quantity, 0);
   const fab = document.getElementById('cartFab');
@@ -1061,30 +1195,41 @@ document.getElementById('customModal').addEventListener('click', event => {
 document.getElementById('staffLoginModal').addEventListener('click', event => {
   if (event.target.id === 'staffLoginModal') closeStaffLoginModal();
 });
+document.getElementById('checkoutModal').addEventListener('click', event => {
+  if (event.target.id === 'checkoutModal') closeCheckoutModal();
+});
 document.getElementById('bookDetailModal').addEventListener('click', event => {
   if (event.target.id === 'bookDetailModal') closeBookDetails();
 });
 document.addEventListener('keydown', event => {
   if (event.key === 'Escape') closeCustomModal();
   if (event.key === 'Escape') closeStaffLoginModal();
+  if (event.key === 'Escape') closeCheckoutModal();
   if (event.key === 'Escape') closeCart();
   if (event.key === 'Escape') closeBookDetails();
 });
 
-function handlePdfUpload(input) {
+async function handlePdfUpload(input) {
   const file = input.files[0];
   if (!file) return;
   if (!document.getElementById('customTitle').value) {
-    document.getElementById('customTitle').value = file.name.replace('.pdf', '');
+    document.getElementById('customTitle').value = file.name.replace(/\.pdf$/i, '');
   }
-  const reader = new FileReader();
-  reader.onload = function() {
-    const typedarray = new Uint8Array(this.result);
-    pdfjsLib.getDocument(typedarray).promise.then(pdf => {
-      document.getElementById('customPages').value = pdf.numPages;
-    });
-  };
-  reader.readAsArrayBuffer(file);
+  const pagesField = document.getElementById('customPages');
+  pagesField.value = '';
+  pagesField.placeholder = 'Reading PDF...';
+  try {
+    if (!window.pdfjsLib) throw new Error('PDF reader library is unavailable.');
+    const fileData = new Uint8Array(await file.arrayBuffer());
+    const loadingTask = pdfjsLib.getDocument({ data: fileData });
+    const pdf = await loadingTask.promise;
+    pagesField.value = pdf.numPages;
+    pagesField.placeholder = '';
+  } catch (error) {
+    console.error('PDF page detection failed:', error);
+    pagesField.placeholder = 'Enter pages manually';
+    alert('The PDF pages could not be detected. Please enter the total pages manually.');
+  }
 }
 
 function submitCustomBook() {

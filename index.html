@@ -99,7 +99,7 @@
 
           <div class="drawer-actions">
             <button class="continue-btn" onclick="closeCart()">Continue shopping</button>
-            <button class="checkout-btn" onclick="focusCheckout()">Checkout</button>
+            <button class="checkout-btn" onclick="openCheckoutModal()">Proceed to checkout</button>
           </div>
           <button class="whatsapp-btn" onclick="shareOnWhatsApp()">Share quote on WhatsApp</button>
           <div class="download-actions">
@@ -240,8 +240,45 @@
         <button aria-label="Close staff login dialog" onclick="closeStaffLoginModal()" style="border:0; background:none; font-size:1.4rem; cursor:pointer;">&times;</button>
       </div>
       <div class="modal-body">
-        <label><span class="field-label">Staff Passcode</span><input type="password" id="staffPasswordInput" placeholder="Enter passcode" onkeydown="if (event.key === 'Enter') { event.preventDefault(); submitStaffLogin(); }"></label>
-        <button class="custom-btn" style="margin-top:10px; width:100%;" onclick="submitStaffLogin()">Log in</button>
+        <label><span class="field-label">Staff Passcode</span><input type="password" id="staffPasswordInput" autocomplete="current-password" placeholder="Enter passcode" onkeydown="if (event.key === 'Enter') { event.preventDefault(); submitStaffLogin(); }"></label>
+        <label class="password-visibility-toggle"><input type="checkbox" id="showStaffPassword" onchange="toggleStaffPasswordVisibility()"><span>Show password</span></label>
+        <button class="custom-btn login-submit-button" id="staffLoginSubmitButton" type="button" onclick="submitStaffLogin()"><span class="login-button-label">Log in</span><span class="login-spinner" aria-hidden="true"></span></button>
+      </div>
+    </div>
+  </div>
+
+  <div id="checkoutModal" class="modal-overlay checkout-overlay" role="dialog" aria-modal="true" aria-labelledby="checkoutTitle">
+    <div class="checkout-modal-card">
+      <div class="modal-header">
+        <div>
+          <div class="eyebrow">Checkout</div>
+          <h3 id="checkoutTitle">Confirm your order</h3>
+        </div>
+        <button class="modal-close-button" aria-label="Close checkout dialog" onclick="closeCheckoutModal()">&times;</button>
+      </div>
+      <div class="checkout-reference-row"><span>Quote / Invoice reference</span><strong id="checkoutReference"></strong></div>
+      <div id="checkoutSummary" class="checkout-summary"></div>
+      <div class="checkout-total-row"><span>Total payable</span><strong id="checkoutTotal"></strong></div>
+
+      <fieldset class="payment-methods">
+        <legend>Payment method</legend>
+        <label class="payment-option"><input type="radio" name="paymentMethod" value="mpesa" checked onchange="togglePaymentFields()"><span><strong>M-Pesa Express</strong><small>STK Push / Till payment</small></span></label>
+        <label class="payment-option"><input type="radio" name="paymentMethod" value="paybill" onchange="togglePaymentFields()"><span><strong>Equity Paybill</strong><small>Paybill 247247</small></span></label>
+      </fieldset>
+
+      <div id="mpesaFields" class="payment-fields">
+        <label><span class="field-label">M-Pesa phone number</span><input id="checkoutMpesaPhone" type="tel" inputmode="tel" autocomplete="tel" placeholder="e.g. 0712 345 678"></label>
+        <p class="payment-hint">Your payment request will be submitted for verification. Confirm the prompt on your phone if an STK Push is available.</p>
+      </div>
+      <div id="paybillFields" class="payment-fields" hidden>
+        <div class="paybill-details"><span>Business number</span><strong>247247</strong></div>
+        <label><span class="field-label">Equity transaction code</span><input id="checkoutPaybillCode" type="text" autocomplete="off" autocapitalize="characters" spellcheck="false" placeholder="Paste transaction code"></label>
+      </div>
+
+      <p id="checkoutStatus" class="checkout-status" role="status" aria-live="polite"></p>
+      <div class="checkout-modal-actions">
+        <button class="whatsapp-btn" type="button" onclick="sendCheckoutToWhatsApp()">Send order to WhatsApp</button>
+        <button class="custom-btn" type="button" onclick="submitCheckoutPayment()">Pay &amp; Confirm Order</button>
       </div>
     </div>
   </div>
