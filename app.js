@@ -30,8 +30,29 @@ const MINIMUM_ORDER_AMOUNT = 500;
 
 let isStaff = false;
 let staffPassword = '';
+let offsetHistory = [];
+let activeAppTab = 'catalogue';
 
-window.addEventListener('load', () => { loadCatalog(); updateStaffUI(); });
+const OFFSET_PAPER_COSTS = {
+  'Bond 70': 1100,
+  'Bond 80': 1300,
+  'Art 135': 2400,
+  'Art 150': 2800,
+  'Art 175': 2800
+};
+const OFFSET_PAPER_DIVISORS = { A3: 1, A4: 2, A5: 4, A6: 8 };
+const OFFSET_MACHINE_COSTS = { 'GTO 46': 250, SM: 300 };
+const OFFSET_SIDES = { 'Single sided': 1, 'Double sided': 2 };
+const OFFSET_PLATE_COST = 250;
+const MASS_PRODUCTION_THRESHOLD = 500;
+const MASS_ART_CARD_COST = 5000;
+const MASS_BOND_80_COST = 1300;
+const MASS_GENERAL_OVERALL_PER_1000 = 1000;
+const MASS_COVER_GENERAL_PER_COPY = { A5: 30, A4: 45, A6: 25 };
+const CLIENT_PROFIT_MARKUP = 0.20;
+const ADMIN_PROFIT_MARKUP = 0.20;
+
+window.addEventListener('load', () => { loadCatalog(); updateStaffUI(); calculateClientMassQuote('booklet'); });
 
 function loadCatalog() {
     showCatalogProgress(8, 'Connecting to the catalogue...');
@@ -123,9 +144,11 @@ function logoutStaff() {
 function updateStaffUI() {
   const loginButton = document.getElementById('staffLoginButton');
   const logoutButton = document.getElementById('staffLogoutButton');
+  const offsetTabButton = document.getElementById('offsetTabButton');
   const discountRow = document.getElementById('discountRow');
   if (loginButton) loginButton.style.display = isStaff ? 'none' : 'inline-flex';
   if (logoutButton) logoutButton.style.display = isStaff ? 'inline-flex' : 'none';
+  if (offsetTabButton) offsetTabButton.style.display = isStaff ? 'inline-flex' : 'none';
   if (discountRow) discountRow.style.display = isStaff ? 'block' : 'none';
   if (!isStaff) document.getElementById('discountInput').value = 0;
   if (rawCatalog.length) {
@@ -133,11 +156,284 @@ function updateStaffUI() {
     displayBooks(query ? catalog.filter(b => `${b.title} ${b.author}`.toLowerCase().includes(query)) : catalog);
   }
   renderCart();
+  if (!isStaff && activeAppTab === 'offset') switchAppTab('mass');
 }
 
 function getDiscountValue() {
   if (!isStaff) return 0;
   return Math.max(0, parseFloat(document.getElementById('discountInput').value) || 0);
+}
+
+function switchAppTab(tabName) {
+  const cataloguePanel = document.getElementById('catalogueTabPanel');
+  const massPanel = document.getElementById('massTabPanel');
+  const offsetPanel = document.getElementById('offsetTabPanel');
+  const catalogueButton = document.getElementById('catalogueTabButton');
+  const massButton = document.getElementById('massTabButton');
+  const offsetButton = document.getElementById('offsetTabButton');
+  const requestedTab = tabName === 'offset' && !isStaff ? 'mass' : tabName;
+  activeAppTab = requestedTab;
+  const activePanel = requestedTab === 'catalogue' ? cataloguePanel : requestedTab === 'mass' ? massPanel : offsetPanel;
+  [cataloguePanel, massPanel, offsetPanel].forEach(panel => {
+    const isActive = panel === activePanel;
+    panel.hidden = !isActive;
+    panel.classList.toggle('is-active', isActive);
+  });
+  [[catalogueButton, 'catalogue'], [massButton, 'mass'], [offsetButton, 'offset']].forEach(([button, name]) => {
+    const isActive = name === requestedTab;
+    button.classList.toggle('is-active', isActive);
+    button.setAttribute('aria-selected', String(isActive));
+  });
+}
+
+function switchMassCalculator(calculatorName) {
+  const panels = {
+    booklet: document.getElementById('bookletCalculatorPanel'),
+    poster: document.getElementById('posterCalculatorPanel'),
+    'business-card': document.getElementById('businessCardCalculatorPanel')
+  };
+  const buttons = {
+    booklet: document.getElementById('bookletCalculatorTab'),
+    poster: document.getElementById('posterCalculatorTab'),
+    'business-card': document.getElementById('businessCardCalculatorTab')
+  };
+  Object.entries(panels).forEach(([name, panel]) => {
+    const isActive = name === calculatorName;
+    panel.hidden = !isActive;
+    panel.classList.toggle('is-active', isActive);
+    buttons[name].classList.toggle('is-active', isActive);
+    buttons[name].setAttribute('aria-selected', String(isActive));
+  });
+  calculateClientMassQuote(calculatorName);
+}
+
+function clientPaperCost(paperType) {
+  return OFFSET_PAPER_COSTS[paperType] || 0;
+}
+
+function showSimpleQuoteResult(id, total, unitCost, note) {
+  document.getElementById(id).innerHTML = `<div><span>Total cost</span><strong>Kshs. ${offsetMoney(total)}</strong></div><div><span>Unit price</span><strong>Kshs. ${offsetMoney(unitCost)}</strong></div>${note ? `<small>${note}</small>` : ''}`;
+}
+
+function calculateClientMassQuote(type) {
+  if (type === 'booklet') {
+    const pagesInput = document.getElementById('bookletPages');
+    const pages = Math.max(1, Number(pagesInput.value || 0));
+    const quantity = Math.max(0, Number(document.getElementById('bookletQuantity').value || 0));
+    const roundedPages = Math.ceil(pages / 4) * 4;
+    const paperSize = document.getElementById('bookletPaperSize').value;
+    const colors = Number(document.getElementById('bookletColors').value);
+    const paperType = document.getElementById('bookletPaperType').value;
+    if (quantity < 100) {
+      document.getElementById('bookletResult').innerHTML = '<small>Booklet mass production starts at a minimum of 100 copies.</small>';
+      return;
+    }
+    if (!paperSize || !colors || !paperType) {
+      document.getElementById('bookletResult').innerHTML = '<small>Complete the booklet specifications to calculate a quote.</small>';
+      return;
+    }
+    const printJob = calculateMassOffsetJob({ pages: roundedPages, quantity, paperSize, colors, sides: 'Double sided', machine: 'SM', paperCost: clientPaperCost(paperType) });
+    const lamination = document.getElementById('bookletLamination').checked ? 5 * quantity : 0;
+    const binding = 4 * quantity;
+    const collection = Math.ceil(roundedPages / 8) * 5 * quantity;
+    const productionCost = printJob.total + lamination + binding + collection;
+    const total = productionCost * (1 + CLIENT_PROFIT_MARKUP);
+    showSimpleQuoteResult('bookletResult', total, total / quantity, `Billed pages: ${roundedPages}. Double-sided SM printing with binding and collection included.`);
+    return;
+  }
+
+  if (type === 'poster') {
+    const pagesInput = document.getElementById('posterPages');
+    const pages = Math.min(2, Math.max(1, Number(pagesInput.value || 1)));
+    pagesInput.value = pages;
+    const quantity = Math.max(0, Number(document.getElementById('posterQuantity').value || 0));
+    const paperSize = document.getElementById('posterPaperSize').value;
+    const sides = document.getElementById('posterSides').value;
+    const colors = Number(document.getElementById('posterColors').value);
+    const paperType = document.getElementById('posterPaperType').value;
+    if (!paperSize || !sides || !colors || !paperType) {
+      document.getElementById('posterResult').innerHTML = '<small>Complete the poster or flyer specifications to calculate a quote.</small>';
+      return;
+    }
+    const printJob = calculateMassOffsetJob({ pages, quantity, paperSize, colors, sides, machine: 'SM', paperCost: clientPaperCost(paperType) });
+    const lamination = document.getElementById('posterLamination').checked ? 5 * quantity : 0;
+    const productionCost = printJob.total + 1000 + lamination;
+    const total = productionCost * (1 + CLIENT_PROFIT_MARKUP);
+    showSimpleQuoteResult('posterResult', total, quantity ? total / quantity : 0, 'Includes the overall production cost and finishing where selected.');
+    return;
+  }
+
+  const quantity = Math.max(0, Number(document.getElementById('businessCardQuantity').value || 0));
+  const paperSize = document.getElementById('businessCardPaperSize').value;
+  const sides = document.getElementById('businessCardSides').value;
+  const colors = Number(document.getElementById('businessCardColors').value);
+  const paperType = document.getElementById('businessCardPaperType').value;
+  if (!paperSize || !sides || !colors || !paperType) {
+    document.getElementById('businessCardResult').innerHTML = '<small>Complete the business card specifications to calculate a quote.</small>';
+    return;
+  }
+  const printJob = calculateMassOffsetJob({ pages: 1, quantity, paperSize, colors, sides, machine: 'SM', paperCost: clientPaperCost(paperType) });
+  const lamination = document.getElementById('businessCardLamination').checked ? 5 * quantity : 0;
+  const productionCost = printJob.total + 1000 + lamination;
+  const total = productionCost * (1 + CLIENT_PROFIT_MARKUP);
+  showSimpleQuoteResult('businessCardResult', total, quantity ? total / quantity : 0, 'Includes the overall production cost and finishing where selected.');
+}
+
+function toggleOffsetPaperCost() {
+  const paperType = document.getElementById('offsetPaperType').value;
+  const paperCost = document.getElementById('offsetPaperCost');
+  const isCustom = paperType === 'Others';
+  paperCost.disabled = !isCustom;
+  if (!isCustom) paperCost.value = '';
+}
+
+function offsetNumber(id) {
+  return Number(document.getElementById(id).value || 0);
+}
+
+function offsetMoney(value) {
+  return Number(value).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+
+function offsetInputState() {
+  return {
+    pages: offsetNumber('offsetPages'),
+    quantity: offsetNumber('offsetQuantity'),
+    paperSize: document.getElementById('offsetPaperSize').value,
+    colors: offsetNumber('offsetColors'),
+    sides: document.getElementById('offsetSides').value,
+    machine: document.getElementById('offsetMachine').value,
+    paperType: document.getElementById('offsetPaperType').value,
+    paperCost: offsetNumber('offsetPaperCost'),
+    cutting: offsetNumber('offsetCutting'),
+    packaging: offsetNumber('offsetPackaging'),
+    otherOverall: offsetNumber('offsetOtherOverall'),
+    collection: offsetNumber('offsetCollection'),
+    binding: offsetNumber('offsetBinding'),
+    lamination: offsetNumber('offsetLamination'),
+    cover: offsetNumber('offsetCover'),
+    otherUnit: offsetNumber('offsetOtherUnit')
+  };
+}
+
+function applyOffsetInputState(state) {
+  const fields = {
+    offsetPages: state.pages,
+    offsetQuantity: state.quantity,
+    offsetPaperSize: state.paperSize,
+    offsetColors: state.colors,
+    offsetSides: state.sides,
+    offsetMachine: state.machine,
+    offsetPaperType: state.paperType,
+    offsetPaperCost: state.paperCost || '',
+    offsetCutting: state.cutting || '',
+    offsetPackaging: state.packaging || '',
+    offsetOtherOverall: state.otherOverall || '',
+    offsetCollection: state.collection || '',
+    offsetBinding: state.binding || '',
+    offsetLamination: state.lamination || '',
+    offsetCover: state.cover || '',
+    offsetOtherUnit: state.otherUnit || ''
+  };
+  Object.entries(fields).forEach(([id, value]) => { document.getElementById(id).value = value; });
+  toggleOffsetPaperCost();
+}
+
+function calculateOffsetQuote() {
+  const input = offsetInputState();
+  if (input.pages <= 0 || input.quantity <= 0 || input.colors <= 0) {
+    alert('Pages, quantity, and colours must be positive whole numbers.');
+    return;
+  }
+
+  const rimCost = input.paperType === 'Others' ? input.paperCost : OFFSET_PAPER_COSTS[input.paperType];
+  if (!Number.isFinite(rimCost) || rimCost < 0) {
+    alert("Enter a valid rim cost when paper type is 'Others'.");
+    return;
+  }
+
+  const printedSides = OFFSET_SIDES[input.sides];
+  const paperDivisor = OFFSET_PAPER_DIVISORS[input.paperSize];
+  const machineRunCost = OFFSET_MACHINE_COSTS[input.machine];
+  const a3Sheets = input.quantity / paperDivisor;
+  const a3EquivalentPages = input.pages / paperDivisor;
+  const plates = Math.ceil(a3EquivalentPages) * input.colors;
+  const plateCost = plates * OFFSET_PLATE_COST;
+  const runCalculation = Math.ceil(a3Sheets / 1000) * input.colors * Math.ceil(a3EquivalentPages);
+  const runs = input.pages === 1 ? runCalculation * printedSides : runCalculation;
+  const runCost = runs * machineRunCost;
+  const rimsNeeded = input.pages > 1
+    ? ((a3Sheets / 500) / printedSides) * input.pages
+    : a3Sheets / 500;
+  const rimsCharged = Math.max(1, rimsNeeded);
+  const materialCost = rimsCharged * rimCost;
+  const coreTotal = plateCost + runCost + materialCost;
+  const overallFixed = input.cutting + input.packaging + input.otherOverall;
+  const variableFinishingPerCopy = input.collection + input.binding + input.lamination + input.cover + input.otherUnit;
+  const variableFinishingTotal = variableFinishingPerCopy * input.quantity;
+  const finishingCost = overallFixed + variableFinishingTotal;
+  const preProfitCost = coreTotal + finishingCost;
+  const totalProfit = preProfitCost * ADMIN_PROFIT_MARKUP;
+  const totalCost = preProfitCost + totalProfit;
+  const unitCost = totalCost / input.quantity;
+  const result = { ...input, rimCost, plates, plateCost, runs, runCost, rimsCharged, materialCost, coreTotal, overallFixed, variableFinishingPerCopy, variableFinishingTotal, preProfitCost, totalProfit, totalCost, unitCost };
+
+  const message = [
+    '--- INPUTS ---',
+    `Pages: ${input.pages}\t\t Quantity: ${input.quantity}`,
+    `Paper Type: ${input.paperType} (Kshs. ${offsetMoney(rimCost)}/Rim)`,
+    `Size/Colors: ${input.paperSize} / ${input.colors} Colors`,
+    '',
+    '--- CORE PRODUCTION BREAKDOWN ---',
+    `Plates Count: ${plates}\t\t Plate Cost (@${offsetMoney(OFFSET_PLATE_COST)}/Plate): Kshs. ${offsetMoney(plateCost)}`,
+    `Machine Runs: ${runs.toFixed(2)}\t\t Runs Cost (@${offsetMoney(machineRunCost)}/Run): Kshs. ${offsetMoney(runCost)}`,
+    `Rims Charged: ${rimsCharged.toFixed(2)}\t\t Material Cost: Kshs. ${offsetMoney(materialCost)}`,
+    `-> CORE TOTAL: Kshs. ${offsetMoney(coreTotal)}`,
+    '',
+    '--- FINISHING & PROFIT BREAKDOWN ---',
+    `Total Overall Fixed Costs: Kshs. ${offsetMoney(overallFixed)}`,
+    `Variable Fin. Cost Per Copy (Excl. Profit): Kshs. ${offsetMoney(variableFinishingPerCopy)}`,
+    `Total Variable Fin. Cost: Kshs. ${offsetMoney(variableFinishingTotal)}`,
+    `Profit Margin (20% of pre-profit cost): Kshs. ${offsetMoney(totalProfit)}`,
+    '',
+    '--- FINAL QUOTE ---',
+    `TOTAL FINAL COST (Incl. Profit): Kshs. ${offsetMoney(totalCost)}`,
+    `UNIT COST (Selling Price per Copy): Kshs. ${offsetMoney(unitCost)}`
+  ].join('\n');
+
+  document.getElementById('offsetResult').textContent = message;
+  offsetHistory.unshift({ input, message, totalCost, quantity: input.quantity });
+  offsetHistory = offsetHistory.slice(0, 5);
+  updateOffsetHistory();
+}
+
+function updateOffsetHistory() {
+  const select = document.getElementById('offsetHistory');
+  const loadButton = document.getElementById('offsetLoadHistory');
+  select.innerHTML = '';
+  offsetHistory.forEach((record, index) => {
+    const option = document.createElement('option');
+    option.value = index;
+    option.textContent = `Quote #${index + 1} | Qty: ${record.quantity} | Total: Kshs. ${offsetMoney(record.totalCost)}`;
+    select.appendChild(option);
+  });
+  select.disabled = offsetHistory.length === 0;
+  loadButton.disabled = offsetHistory.length === 0;
+}
+
+function loadOffsetHistory() {
+  const index = Number(document.getElementById('offsetHistory').value);
+  const record = offsetHistory[index];
+  if (!record) return;
+  applyOffsetInputState(record.input);
+  document.getElementById('offsetResult').textContent = record.message;
+}
+
+function resetOffsetCalculator() {
+  applyOffsetInputState({ pages: '', quantity: '', paperSize: '', colors: '', sides: '', machine: '', paperType: '', paperCost: '', cutting: '', packaging: '', otherOverall: '', collection: '', binding: '', lamination: '', cover: '', otherUnit: '' });
+  document.getElementById('offsetResult').textContent = 'Enter your specifications and calculate an offset quote.';
+  offsetHistory = [];
+  updateOffsetHistory();
 }
 
 // Staff-only: saves the permanent catalogue price in the shared books sheet.
@@ -170,7 +466,105 @@ async function editSpecialPrice(bookId) {
 }
 
 function getUnitPrice(item) {
+  if (getProductionMode(item) === 'mass') {
+    item.massCalculation = calculateMassProduction(item);
+    item.massUnitCost = item.massCalculation.unitCost;
+    return item.massUnitCost;
+  }
   return Number(item.activeUnitCost);
+}
+
+function getProductionMode(item) {
+  if (item.productionMode === 'mass') return 'mass';
+  if (item.productionMode === 'sample') return 'sample';
+  return item.quantity >= MASS_PRODUCTION_THRESHOLD ? 'mass' : 'sample';
+}
+
+function getSizeLabel(sizeCode) {
+  return SIZE_LABELS[String(sizeCode)] || 'A5 Size';
+}
+
+function getBookSizeName(sizeCode) {
+  return getSizeLabel(sizeCode).replace(/\s+Size$/i, '').trim();
+}
+
+function calculateMassOffsetJob({ pages, quantity, paperSize, colors, sides, machine, paperCost }) {
+  if (pages <= 0) return { total: 0, plates: 0, runs: 0, material: 0 };
+  const paperDivisor = OFFSET_PAPER_DIVISORS[paperSize];
+  const printedSides = OFFSET_SIDES[sides];
+  const machineRunCost = OFFSET_MACHINE_COSTS[machine];
+  const a3Sheets = quantity / paperDivisor;
+  const a3EquivalentPages = pages / paperDivisor;
+  const plates = Math.ceil(a3EquivalentPages) * colors;
+  const plateCost = plates * OFFSET_PLATE_COST;
+  const runBase = Math.ceil(a3Sheets / 1000) * colors * Math.ceil(a3EquivalentPages);
+  const runs = pages === 1 ? runBase * printedSides : runBase;
+  const runCost = runs * machineRunCost;
+  const rimsNeeded = pages > 1
+    ? ((a3Sheets / 500) / printedSides) * pages
+    : a3Sheets / 500;
+  const rimsCharged = Math.max(1, rimsNeeded);
+  const material = rimsCharged * paperCost;
+  return { total: plateCost + runCost + material, plates, runs, material };
+}
+
+function calculateMassProduction(item) {
+  const bookSize = getBookSizeName(item.selectedSizeCode);
+  const coverPaperSize = { A6: 'A5', A5: 'A4', A4: 'A3' }[bookSize];
+  const quantity = item.quantity;
+  const overallCost = Math.ceil(quantity / 1000) * MASS_GENERAL_OVERALL_PER_1000;
+  const coverJob = calculateMassOffsetJob({
+    pages: 1,
+    quantity,
+    paperSize: coverPaperSize,
+    colors: 4,
+    sides: 'Single sided',
+    machine: 'SM',
+    paperCost: MASS_ART_CARD_COST
+  });
+  const blackPages = Math.max(0, Number(item.pages) - Number(item.colorPages || 0));
+  const colourPages = Math.max(0, Number(item.colorPages || 0));
+  const blackJob = calculateMassOffsetJob({
+    pages: blackPages,
+    quantity,
+    paperSize: bookSize,
+    colors: 1,
+    sides: 'Double sided',
+    machine: 'SM',
+    paperCost: MASS_BOND_80_COST
+  });
+  const colourJob = calculateMassOffsetJob({
+    pages: colourPages,
+    quantity,
+    paperSize: bookSize,
+    colors: 4,
+    sides: 'Double sided',
+    machine: 'SM',
+    paperCost: MASS_BOND_80_COST
+  });
+  const coverGeneral = MASS_COVER_GENERAL_PER_COPY[bookSize] || 0;
+  const coverPreProfitTotal = coverJob.total + (coverGeneral * quantity) + overallCost;
+  const insertsPreProfitTotal = blackJob.total + colourJob.total + overallCost;
+  const preProfitTotal = coverPreProfitTotal + insertsPreProfitTotal;
+  const total = preProfitTotal * (1 + CLIENT_PROFIT_MARKUP);
+  return {
+    total,
+    unitCost: total / quantity,
+    coverUnitCost: coverPreProfitTotal / quantity,
+    insertsUnitCost: insertsPreProfitTotal / quantity,
+    coverPaperSize,
+    bookSize,
+    blackPages,
+    colourPages,
+    overallCost
+  };
+}
+
+function setProductionMode(bookId, mode) {
+  const item = cart.find(entry => entry.id === bookId);
+  if (!item) return;
+  item.productionMode = mode;
+  renderCart();
 }
 
 function computeOrderTotals(subtotal, discount) {
@@ -303,6 +697,7 @@ function addToCart(bookId) {
         ...book, 
         selectedSizeCode: String(book.sizeCode || "1"),
         activeUnitCost: book.unitCost,
+        productionMode: 'auto',
         quantity: 1 
       }); 
     } 
@@ -405,19 +800,28 @@ function renderCart() {
   let subtotal = 0;
 
   cart.forEach(item => {
+    const productionMode = getProductionMode(item);
     const unitPrice = getUnitPrice(item);
     const itemTotal = unitPrice * item.quantity;
     subtotal += itemTotal;
 
     const priceLabel = item.pricePending
       ? 'Calculating backend price...'
-      : `@ Kshs. ${unitPrice.toFixed(2)}${item.hasSpecialPrice ? ' <span class="custom-price-tag">Special price</span>' : ''}`;
+      : `${productionMode === 'mass' ? 'Mass production @' : 'Sample production @'} Kshs. ${unitPrice.toFixed(2)}${item.hasSpecialPrice && productionMode === 'sample' ? ' <span class="custom-price-tag">Special price</span>' : ''}`;
+    const massBreakdown = productionMode === 'mass' && item.massCalculation
+      ? `<div style="color:var(--muted); font-size:.7rem; margin-top:3px;">Cover Kshs. ${item.massCalculation.coverUnitCost.toFixed(2)} + inserts Kshs. ${item.massCalculation.insertsUnitCost.toFixed(2)} / copy</div>`
+      : '';
 
     html += `
       <div class="cart-item">
         <div>
           <div class="cart-item-title">${escapeHtml(item.title)}</div>
           <div class="price-row" style="color:var(--muted); font-size:.75rem;"><span>${priceLabel}</span></div>
+          ${massBreakdown}
+          <div class="production-mode" role="group" aria-label="Production mode for ${escapeHtml(item.title)}">
+            <button type="button" class="production-mode-button ${productionMode === 'mass' ? 'is-active' : ''}" onclick="setProductionMode(${item.id}, 'mass')">Mass</button>
+            <button type="button" class="production-mode-button ${productionMode === 'sample' ? 'is-active' : ''}" onclick="setProductionMode(${item.id}, 'sample')">Sample</button>
+          </div>
           
           <select class="size-select" onchange="updateSize(${item.id}, this.value)">
             <option value="1" ${item.selectedSizeCode === "1" ? "selected" : ""}>A5 Size</option>

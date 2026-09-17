@@ -12,6 +12,10 @@ function getStaffPassword(ss) {
  * - fixedCost: Sum of BINDING_COST, COVER_COST, POSTING_COST, etc. from Columns F & G
  */
 function getParametersFromSheet(ss) {
+  const cache = CacheService.getScriptCache();
+  const cached = cache.get('quotation_parameters_v1');
+  if (cached) return JSON.parse(cached);
+
   const paramsSheet = ss.getSheetByName('Parameters') || ss.getSheetByName('parameters');
   if (!paramsSheet) {
     throw new Error("Tab named 'Parameters' not found in spreadsheet.");
@@ -47,7 +51,9 @@ function getParametersFromSheet(ss) {
     };
   }
 
-  return { rules, fixedCost: totalFixedCost };
+  const params = { rules, fixedCost: totalFixedCost };
+  cache.put('quotation_parameters_v1', JSON.stringify(params), 300);
+  return params;
 }
 
 /**
@@ -84,8 +90,24 @@ function parseSpecialPrice(value) {
   return Number.isFinite(price) && price >= 0 ? price : null;
 }
 
+function getCatalogueCacheKey() {
+  return 'quotation_catalogue_v1';
+}
+
+function clearCatalogueCache() {
+  CacheService.getScriptCache().remove(getCatalogueCacheKey());
+}
+
 function doGet(e) {
   try {
+    const cache = CacheService.getScriptCache();
+    const cachedCatalogue = cache.get(getCatalogueCacheKey());
+    if (cachedCatalogue) {
+      return ContentService
+        .createTextOutput(cachedCatalogue)
+        .setMimeType(ContentService.MimeType.JSON);
+    }
+
     const ss = SpreadsheetApp.getActiveSpreadsheet();
     const booksSheet = ss.getSheetByName('books');
     
@@ -148,8 +170,12 @@ function doGet(e) {
       });
     }
 
+    const response = JSON.stringify({ status: 'success', data: books });
+    if (response.length < 95000) {
+      cache.put(getCatalogueCacheKey(), response, 60);
+    }
     return ContentService
-      .createTextOutput(JSON.stringify({ status: 'success', data: books }))
+      .createTextOutput(response)
       .setMimeType(ContentService.MimeType.JSON);
 
   } catch (err) {
@@ -172,12 +198,11 @@ function doPost(e) {
         .setMimeType(ContentService.MimeType.JSON);
     }
 
-    const params = getParametersFromSheet(ss);
-
     // -------------------------------------------------------------
     // ROUTE 1: Dynamic cost calculation endpoint
     // -------------------------------------------------------------
     if (postData.action === 'calculate_cost') {
+      const params = getParametersFromSheet(ss);
       const unitCost = computeUnitCost(postData.pages, postData.colorPages, postData.sizeCode, params);
       return ContentService
         .createTextOutput(JSON.stringify({ status: 'success', unitCost: unitCost }))
@@ -234,6 +259,7 @@ function doPost(e) {
       const specialPriceColumn = getSpecialPriceColumn(booksSheet);
       const specialPrice = parseSpecialPrice(postData.specialPrice);
       booksSheet.getRange(bookId + 1, specialPriceColumn).setValue(specialPrice === null ? '' : specialPrice);
+      clearCatalogueCache();
 
       return ContentService
         .createTextOutput(JSON.stringify({ status: 'success', specialPrice: specialPrice }))
@@ -266,8 +292,10 @@ function doPost(e) {
       }
     }
 
+    const params = getParametersFromSheet(ss);
     const unitCost = computeUnitCost(pages, colorPages, sizeCode, params);
     booksSheet.appendRow([title, author, pages, colorPages, sizeCode, unitCost, '']);
+    clearCatalogueCache();
 
     const codeKey = sizeCode.charAt(0);
     const sizeLabel = (params.rules[codeKey] && params.rules[codeKey].label) 

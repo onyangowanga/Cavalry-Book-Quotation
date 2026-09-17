@@ -35,7 +35,14 @@
       </div>
     </header>
 
-    <div class="content">
+    <nav class="app-tabs" role="tablist" aria-label="Quotation tools">
+      <button class="app-tab is-active" id="catalogueTabButton" role="tab" aria-selected="true" aria-controls="catalogueTabPanel" onclick="switchAppTab('catalogue')">Catalogue quote</button>
+      <button class="app-tab" id="massTabButton" role="tab" aria-selected="false" aria-controls="massTabPanel" onclick="switchAppTab('mass')">Mass printing</button>
+      <button class="app-tab" id="offsetTabButton" role="tab" aria-selected="false" aria-controls="offsetTabPanel" onclick="switchAppTab('offset')" style="display:none;">Admin offset</button>
+    </nav>
+
+    <div id="catalogueTabPanel" class="tab-panel is-active" role="tabpanel" aria-labelledby="catalogueTabButton">
+      <div class="content">
       <section class="catalog-panel">
         <div class="catalog-toolbar">
           <button class="custom-btn" onclick="openCustomModal()">+ Quote Other Book/ PDF</button>
@@ -101,7 +108,124 @@
           </div>
         </div>
       </aside>
+      </div>
     </div>
+
+    <section id="massTabPanel" class="tab-panel offset-panel" role="tabpanel" aria-labelledby="massTabButton" hidden>
+      <div class="offset-heading">
+        <div>
+          <div class="eyebrow">Mass production</div>
+          <h2>Get a simple offset estimate</h2>
+          <p>Choose a product, enter the order details, and get a total and unit price.</p>
+        </div>
+      </div>
+      <nav class="calculator-tabs" role="tablist" aria-label="Mass printing products">
+        <button class="calculator-tab is-active" id="bookletCalculatorTab" role="tab" aria-selected="true" onclick="switchMassCalculator('booklet')">Booklet printing</button>
+        <button class="calculator-tab" id="posterCalculatorTab" role="tab" aria-selected="false" onclick="switchMassCalculator('poster')">Posters / flyers</button>
+        <button class="calculator-tab" id="businessCardCalculatorTab" role="tab" aria-selected="false" onclick="switchMassCalculator('business-card')">Business cards</button>
+      </nav>
+
+      <section id="bookletCalculatorPanel" class="calculator-panel is-active">
+        <div class="offset-card">
+          <h3>Booklet printing</h3>
+          <p class="calculator-note">Minimum production quantity: 100 copies. Page count is rounded up to the next multiple of 4.</p>
+          <div class="offset-fields">
+            <label><span class="field-label">Total pages</span><input id="bookletPages" type="number" min="1" placeholder="e.g. 32" oninput="calculateClientMassQuote('booklet')"></label>
+            <label><span class="field-label">Quantity / copies</span><input id="bookletQuantity" type="number" min="100" placeholder="Minimum 100" oninput="calculateClientMassQuote('booklet')"></label>
+            <label><span class="field-label">Printed paper size</span><select id="bookletPaperSize" onchange="calculateClientMassQuote('booklet')"><option value="" selected disabled>Select size</option><option>A4</option><option>A5</option></select></label>
+            <label><span class="field-label">Number of colours</span><select id="bookletColors" onchange="calculateClientMassQuote('booklet')"><option value="" selected disabled>Select colours</option><option>1</option><option>2</option><option>3</option><option>4</option></select></label>
+            <label><span class="field-label">Paper type</span><select id="bookletPaperType" onchange="calculateClientMassQuote('booklet')"><option value="" selected disabled>Select paper</option><option>Bond 70</option><option>Bond 80</option><option>Art 135</option><option>Art 150</option><option>Art 175</option></select></label>
+            <label class="checkbox-field"><span class="field-label">Finishing</span><span><input id="bookletLamination" type="checkbox" onchange="calculateClientMassQuote('booklet')"> Lamination, Kshs. 5 / copy</span></label>
+          </div>
+        </div>
+        <div id="bookletResult" class="simple-quote-result"></div>
+      </section>
+
+      <section id="posterCalculatorPanel" class="calculator-panel" hidden>
+        <div class="offset-card">
+          <h3>Posters / flyers</h3>
+          <div class="offset-fields">
+            <label><span class="field-label">Total pages</span><input id="posterPages" type="number" min="1" max="2" placeholder="1 or 2" oninput="calculateClientMassQuote('poster')"></label>
+            <label><span class="field-label">Quantity / copies</span><input id="posterQuantity" type="number" min="1" placeholder="e.g. 100" oninput="calculateClientMassQuote('poster')"></label>
+            <label><span class="field-label">Printed paper size</span><select id="posterPaperSize" onchange="calculateClientMassQuote('poster')"><option value="" selected disabled>Select size</option><option>A3</option><option>A4</option><option>A5</option><option>A6</option></select></label>
+            <label><span class="field-label">Printed sides</span><select id="posterSides" onchange="calculateClientMassQuote('poster')"><option value="" selected disabled>Select sides</option><option>Single sided</option><option>Double sided</option></select></label>
+            <label><span class="field-label">Number of colours</span><select id="posterColors" onchange="calculateClientMassQuote('poster')"><option value="" selected disabled>Select colours</option><option>1</option><option>2</option><option>3</option><option>4</option></select></label>
+            <label><span class="field-label">Paper type</span><select id="posterPaperType" onchange="calculateClientMassQuote('poster')"><option value="" selected disabled>Select paper</option><option>Bond 70</option><option>Bond 80</option><option>Art 135</option><option>Art 150</option><option>Art 175</option></select></label>
+            <label class="checkbox-field"><span class="field-label">Finishing</span><span><input id="posterLamination" type="checkbox" onchange="calculateClientMassQuote('poster')"> Lamination, Kshs. 5 / copy</span></label>
+          </div>
+        </div>
+        <div id="posterResult" class="simple-quote-result"></div>
+      </section>
+
+      <section id="businessCardCalculatorPanel" class="calculator-panel" hidden>
+        <div class="offset-card">
+          <h3>Business cards</h3>
+          <div class="offset-fields">
+            <label><span class="field-label">Quantity / cards</span><input id="businessCardQuantity" type="number" min="1" placeholder="e.g. 100" oninput="calculateClientMassQuote('business-card')"></label>
+            <label><span class="field-label">Printed paper size</span><select id="businessCardPaperSize" onchange="calculateClientMassQuote('business-card')"><option value="" selected disabled>Select size</option><option>A3</option><option>A4</option><option>A5</option></select></label>
+            <label><span class="field-label">Printed sides</span><select id="businessCardSides" onchange="calculateClientMassQuote('business-card')"><option value="" selected disabled>Select sides</option><option>Single sided</option><option>Double sided</option></select></label>
+            <label><span class="field-label">Number of colours</span><select id="businessCardColors" onchange="calculateClientMassQuote('business-card')"><option value="" selected disabled>Select colours</option><option>1</option><option>2</option><option>3</option><option>4</option></select></label>
+            <label><span class="field-label">Paper type</span><select id="businessCardPaperType" onchange="calculateClientMassQuote('business-card')"><option value="" selected disabled>Select paper</option><option>Bond 70</option><option>Bond 80</option><option>Art 135</option><option>Art 150</option><option>Art 175</option></select></label>
+            <label class="checkbox-field"><span class="field-label">Finishing</span><span><input id="businessCardLamination" type="checkbox" onchange="calculateClientMassQuote('business-card')"> Lamination, Kshs. 5 / card</span></label>
+          </div>
+        </div>
+        <div id="businessCardResult" class="simple-quote-result"></div>
+      </section>
+    </section>
+
+    <section id="offsetTabPanel" class="tab-panel offset-panel" role="tabpanel" aria-labelledby="offsetTabButton" hidden>
+      <div class="offset-heading">
+        <div>
+          <div class="eyebrow">Offset printing</div>
+          <h2>Build an offset quote</h2>
+          <p>Calculate plates, machine runs, paper, finishing and profit in one place.</p>
+        </div>
+        <button class="refresh-btn" type="button" onclick="resetOffsetCalculator()">Reset calculator</button>
+      </div>
+
+      <div class="offset-input-grid">
+        <section class="offset-card">
+          <h3>Printing &amp; material specs</h3>
+          <div class="offset-fields">
+            <label><span class="field-label">Total pages</span><input id="offsetPages" type="number" min="1" placeholder="e.g. 32"></label>
+            <label><span class="field-label">Quantity / copies</span><input id="offsetQuantity" type="number" min="1" placeholder="e.g. 1000"></label>
+            <label><span class="field-label">Printed paper size</span><select id="offsetPaperSize"><option value="" selected disabled>Select size</option><option>A3</option><option>A4</option><option>A5</option><option>A6</option></select></label>
+            <label><span class="field-label">Number of colours</span><select id="offsetColors"><option value="" selected disabled>Select colours</option><option>1</option><option>2</option><option>3</option><option>4</option></select></label>
+            <label><span class="field-label">Printed sides</span><select id="offsetSides"><option value="" selected disabled>Select sides</option><option>Single sided</option><option>Double sided</option></select></label>
+            <label><span class="field-label">Printer type</span><select id="offsetMachine"><option value="" selected disabled>Select printer</option><option>GTO 46</option><option>SM</option></select></label>
+            <label><span class="field-label">Paper type</span><select id="offsetPaperType" onchange="toggleOffsetPaperCost()"><option value="" selected disabled>Select paper</option><option>Bond 70</option><option>Bond 80</option><option>Art 135</option><option>Art 150</option><option>Art 175</option><option>Others</option></select></label>
+            <label><span class="field-label">Others rim cost (Kshs / rim)</span><input id="offsetPaperCost" type="number" min="0" placeholder="Enter amount" disabled></label>
+          </div>
+        </section>
+
+        <section class="offset-card">
+          <h3>Optional finishing &amp; profit</h3>
+          <div class="offset-fields">
+            <label><span class="field-label">Cutting, overall</span><input id="offsetCutting" type="number" min="0" placeholder="Enter amount"></label>
+            <label><span class="field-label">Packaging, overall</span><input id="offsetPackaging" type="number" min="0" placeholder="Enter amount"></label>
+            <label><span class="field-label">Other fixed cost</span><input id="offsetOtherOverall" type="number" min="0" placeholder="Enter amount"></label>
+            <label><span class="field-label">Collection / copy</span><input id="offsetCollection" type="number" min="0" placeholder="Enter amount"></label>
+            <label><span class="field-label">Binding / copy</span><input id="offsetBinding" type="number" min="0" placeholder="Enter amount"></label>
+            <label><span class="field-label">Lamination / copy</span><input id="offsetLamination" type="number" min="0" placeholder="Enter amount"></label>
+            <label><span class="field-label">Cover cost / copy</span><input id="offsetCover" type="number" min="0" placeholder="Enter amount"></label>
+            <label><span class="field-label">Other variable / copy</span><input id="offsetOtherUnit" type="number" min="0" placeholder="Enter amount"></label>
+            <div class="offset-fixed-value"><span class="field-label">Profit margin</span><strong>20% of pre-profit cost</strong></div>
+          </div>
+        </section>
+      </div>
+
+      <div class="offset-actions">
+        <button class="custom-btn" type="button" onclick="calculateOffsetQuote()">Calculate offset quote</button>
+        <div class="offset-history-controls">
+          <label class="offset-history-select"><span class="field-label">Recent quotes</span><select id="offsetHistory" disabled><option>No saved calculations</option></select></label>
+          <button class="refresh-btn" type="button" id="offsetLoadHistory" onclick="loadOffsetHistory()" disabled>Load</button>
+        </div>
+      </div>
+
+      <div class="offset-result-wrap">
+        <pre id="offsetResult" class="offset-result">Enter your specifications and calculate an offset quote.</pre>
+      </div>
+    </section>
   </main>
 
   <div id="drawerBackdrop" class="drawer-backdrop" onclick="closeCart()"></div>
