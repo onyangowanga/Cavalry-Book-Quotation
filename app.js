@@ -33,6 +33,9 @@ let staffPassword = '';
 let offsetHistory = [];
 let activeAppTab = 'catalogue';
 let checkoutReference = '';
+let currentDocument = null;
+let allDocuments = [];
+let documentsFilter = 'all';
 
 const OFFSET_PAPER_COSTS = {
   'Bond 70': 1100,
@@ -164,10 +167,12 @@ function updateStaffUI() {
   const loginButton = document.getElementById('staffLoginButton');
   const logoutButton = document.getElementById('staffLogoutButton');
   const offsetTabButton = document.getElementById('offsetTabButton');
+  const documentsTabButton = document.getElementById('documentsTabButton');
   const discountRow = document.getElementById('discountRow');
   if (loginButton) loginButton.style.display = isStaff ? 'none' : 'inline-flex';
   if (logoutButton) logoutButton.style.display = isStaff ? 'inline-flex' : 'none';
   if (offsetTabButton) offsetTabButton.style.display = isStaff ? 'inline-flex' : 'none';
+  if (documentsTabButton) documentsTabButton.style.display = isStaff ? 'inline-flex' : 'none';
   if (discountRow) discountRow.style.display = isStaff ? 'block' : 'none';
   if (!isStaff) document.getElementById('discountInput').value = 0;
   if (rawCatalog.length) {
@@ -175,7 +180,7 @@ function updateStaffUI() {
     displayBooks(query ? catalog.filter(b => `${b.title} ${b.author}`.toLowerCase().includes(query)) : catalog);
   }
   renderCart();
-  if (!isStaff && activeAppTab === 'offset') switchAppTab('mass');
+  if (!isStaff && (activeAppTab === 'offset' || activeAppTab === 'documents')) switchAppTab('mass');
 }
 
 function getDiscountValue() {
@@ -187,22 +192,26 @@ function switchAppTab(tabName) {
   const cataloguePanel = document.getElementById('catalogueTabPanel');
   const massPanel = document.getElementById('massTabPanel');
   const offsetPanel = document.getElementById('offsetTabPanel');
+  const documentsPanel = document.getElementById('documentsTabPanel');
   const catalogueButton = document.getElementById('catalogueTabButton');
   const massButton = document.getElementById('massTabButton');
   const offsetButton = document.getElementById('offsetTabButton');
-  const requestedTab = tabName === 'offset' && !isStaff ? 'mass' : tabName;
+  const documentsButton = document.getElementById('documentsTabButton');
+  const requestedTab = (tabName === 'offset' || tabName === 'documents') && !isStaff ? 'mass' : tabName;
   activeAppTab = requestedTab;
-  const activePanel = requestedTab === 'catalogue' ? cataloguePanel : requestedTab === 'mass' ? massPanel : offsetPanel;
-  [cataloguePanel, massPanel, offsetPanel].forEach(panel => {
+  const panelsByName = { catalogue: cataloguePanel, mass: massPanel, offset: offsetPanel, documents: documentsPanel };
+  const activePanel = panelsByName[requestedTab] || cataloguePanel;
+  [cataloguePanel, massPanel, offsetPanel, documentsPanel].forEach(panel => {
     const isActive = panel === activePanel;
     panel.hidden = !isActive;
     panel.classList.toggle('is-active', isActive);
   });
-  [[catalogueButton, 'catalogue'], [massButton, 'mass'], [offsetButton, 'offset']].forEach(([button, name]) => {
+  [[catalogueButton, 'catalogue'], [massButton, 'mass'], [offsetButton, 'offset'], [documentsButton, 'documents']].forEach(([button, name]) => {
     const isActive = name === requestedTab;
     button.classList.toggle('is-active', isActive);
     button.setAttribute('aria-selected', String(isActive));
   });
+  if (requestedTab === 'documents') loadDocumentsTracker();
 }
 
 function switchMassCalculator(calculatorName) {
@@ -872,7 +881,7 @@ async function submitCheckoutPayment() {
   const order = getCurrentOrderSnapshot();
   setCheckoutStatus('Submitting your order for payment verification...', '');
   try {
-    const response = await fetch(API_URL, {
+    const orderResponse = await fetch(API_URL, {
       method: 'POST',
       headers: { 'Content-Type': 'text/plain;charset=utf-8' },
       body: JSON.stringify({
@@ -883,19 +892,270 @@ async function submitCheckoutPayment() {
         transactionCode: method === 'paybill' ? transactionCode : '',
         clientName: order.clientName,
         clientPhone: order.clientPhone,
+        items: order.items,
         itemsSummary: order.items.map(item => `${item.quantity}x ${item.title} (${item.mode})`).join('; '),
         subtotal: order.subtotal,
         discount: order.discount,
         total: order.total
       })
     });
-    const result = await response.json();
-    if (result.status !== 'success') throw new Error(result.message || 'Order submission failed.');
-    setCheckoutStatus(method === 'mpesa' ? 'Order submitted. Complete the M-Pesa prompt or payment verification.' : 'Order submitted. Your transaction code will be verified.', 'success');
+    const orderResult = await orderResponse.json();
+    if (orderResult.status !== 'success') throw new Error(orderResult.message || 'Order submission failed.');
+    const invoiceResponse = await fetch(API_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+      body: JSON.stringify({ action: 'convert_order_to_invoice', orderReference: orderResult.reference })
+    });
+    const invoiceResult = await invoiceResponse.json();
+    if (invoiceResult.status !== 'success') throw new Error(invoiceResult.message || 'Invoice creation failed.');
+    currentDocument = invoiceResult.data || { ...order, type: 'invoice', reference: invoiceResult.reference, status: 'PENDING' };
+    currentDocument.type = 'invoice';
+    currentDocument.reference = invoiceResult.reference;
+    if (method === 'paybill') {
+      const receiptResponse = await fetch(API_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+        body: JSON.stringify({ action: 'confirm_invoice_payment', invoiceReference: invoiceResult.reference, paymentMethod: method, paymentReference: transactionCode })
+      });
+      const receiptResult = await receiptResponse.json();
+      if (receiptResult.status === 'success') {
+        currentDocument = receiptResult.data || currentDocument;
+        currentDocument.type = 'receipt';
+        currentDocument.reference = receiptResult.reference;
+      }
+    }
+    document.getElementById('checkoutDocumentActions').hidden = false;
+    setCheckoutStatus(method === 'mpesa' ? `Invoice ${invoiceResult.reference} created and awaiting payment verification.` : `Receipt ${currentDocument.reference} created and payment recorded.`, 'success');
+    openDocumentPreview();
   } catch (error) {
     console.error('Checkout submission failed:', error);
     setCheckoutStatus('The order could not be submitted. Please try again or send it to WhatsApp.', 'error');
   }
+}
+
+const COMPANY_LOGO_URL = 'https://lh3.googleusercontent.com/d/1F2xjo6EPzhSGZMFRrP8IAaMWXe_o7xKG=s1000';
+
+function renderDocumentHtml(documentData) {
+  const status = String(documentData.status || 'PENDING').toUpperCase();
+  const items = documentData.items || [];
+  return `<img class="document-watermark-logo" src="${COMPANY_LOGO_URL}" alt="" crossorigin="anonymous" aria-hidden="true" onerror="this.style.display='none';">
+    <header class="document-render-header">
+      <div class="document-render-brand">
+        <img class="document-brand-logo" src="${COMPANY_LOGO_URL}" alt="Cavalry Publishers" crossorigin="anonymous" onerror="this.style.display='none'; this.nextElementSibling.style.display='block';">
+        <div class="document-brand-fallback">CAVALRY<span>PUBLISHERS</span></div>
+      </div>
+      <div class="document-render-heading"><h1>${escapeHtml(documentData.type || 'invoice')}</h1><p>${escapeHtml(documentData.reference || '')}</p><p>${new Date().toLocaleDateString('en-GB')}</p></div>
+    </header>
+    <div class="document-render-meta"><div>Prepared for<strong>${escapeHtml(documentData.clientName || 'Valued Client')}</strong><span>${escapeHtml(documentData.clientPhone || 'Phone not provided')}</span></div><div>Payment status<strong>${escapeHtml(status)}</strong><span>${escapeHtml(documentData.paymentMethod || 'Payment pending')}</span></div></div>
+    <table class="document-render-table"><thead><tr><th>Description</th><th>Qty</th><th>Unit price</th><th>Amount</th></tr></thead><tbody>${items.map(item => `<tr><td>${escapeHtml(item.title || item.name || '')}<br><small>${escapeHtml(item.mode || '')} ${escapeHtml(item.size || '')}</small></td><td>${item.quantity || 0}</td><td>Kshs. ${Number(item.unitPrice || 0).toLocaleString('en-US', { minimumFractionDigits: 2 })}</td><td>Kshs. ${Number(item.total || 0).toLocaleString('en-US', { minimumFractionDigits: 2 })}</td></tr>`).join('')}</tbody></table>
+    <div class="document-render-total"><span>Total Kshs.</span><strong>${Number(documentData.total || 0).toLocaleString('en-US', { minimumFractionDigits: 2 })}</strong></div>
+    <div class="document-status-stamp ${status === 'PAID' ? '' : 'pending'}">${escapeHtml(status)}</div>`;
+}
+
+function openDocumentPreview() {
+  if (!currentDocument) return;
+  document.getElementById('documentPreviewTitle').textContent = `${currentDocument.type || 'Document'} ${currentDocument.reference || ''}`;
+  document.getElementById('documentRenderSurface').innerHTML = renderDocumentHtml(currentDocument);
+  const confirmButton = document.getElementById('confirmDocumentPaymentButton');
+  confirmButton.hidden = !(isStaff && currentDocument.type === 'invoice' && currentDocument.status !== 'PAID');
+  document.getElementById('documentPreviewModal').style.display = 'flex';
+}
+
+function closeDocumentPreview() { document.getElementById('documentPreviewModal').style.display = 'none'; }
+
+async function confirmCurrentInvoicePayment() {
+  if (!currentDocument || currentDocument.type !== 'invoice' || !isStaff) return;
+  const paymentMethod = prompt('Payment method (cash, mpesa, or paybill):', 'cash');
+  if (!paymentMethod) return;
+  const paymentReference = prompt('Payment reference or transaction code (optional):', '') || '';
+  try {
+    const response = await fetch(API_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+      body: JSON.stringify({ action: 'confirm_invoice_payment', invoiceReference: currentDocument.reference, paymentMethod, paymentReference })
+    });
+    const result = await response.json();
+    if (result.status !== 'success') throw new Error(result.message || 'Payment confirmation failed.');
+    currentDocument = result.data;
+    currentDocument.type = 'receipt';
+    currentDocument.reference = result.reference;
+    openDocumentPreview();
+  } catch (error) {
+    console.error('Invoice payment confirmation failed:', error);
+    alert('The payment could not be confirmed. Please try again.');
+  }
+}
+
+// Admin-only: loads every quote/order/invoice/receipt for the tracking & accounting tab.
+async function loadDocumentsTracker() {
+  if (!isStaff) return;
+  const tableBody = document.getElementById('documentsTableBody');
+  tableBody.innerHTML = '<tr><td colspan="7" class="documents-empty">Loading documents...</td></tr>';
+  try {
+    const response = await fetch(API_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+      body: JSON.stringify({ action: 'list_documents', staffPassword })
+    });
+    const result = await response.json();
+    if (result.status !== 'success') throw new Error(result.message || 'Documents could not be loaded.');
+    allDocuments = result.data || [];
+    renderAccountingSummary();
+    renderDocumentsTable();
+  } catch (error) {
+    console.error('Loading documents failed:', error);
+    tableBody.innerHTML = '<tr><td colspan="7" class="documents-empty">Documents could not be loaded. Please refresh.</td></tr>';
+  }
+}
+
+function formatKshs(value) {
+  return `Kshs. ${Number(value || 0).toLocaleString('en-US', { minimumFractionDigits: 2 })}`;
+}
+
+// Basic accounting: quoted/ordered volume, outstanding invoices, and collected receipts.
+function renderAccountingSummary() {
+  const quotesTotal = allDocuments.filter(doc => doc.type === 'quotation').reduce((sum, doc) => sum + doc.total, 0);
+  const ordersTotal = allDocuments.filter(doc => doc.type === 'order').reduce((sum, doc) => sum + doc.total, 0);
+  const invoices = allDocuments.filter(doc => doc.type === 'invoice');
+  const outstandingInvoices = invoices.filter(doc => doc.status !== 'PAID');
+  const outstandingTotal = outstandingInvoices.reduce((sum, doc) => sum + doc.total, 0);
+  const receipts = allDocuments.filter(doc => doc.type === 'receipt');
+  const collectedTotal = receipts.reduce((sum, doc) => sum + doc.total, 0);
+
+  const cards = [
+    { label: 'Quotes issued', value: `${allDocuments.filter(d => d.type === 'quotation').length} · ${formatKshs(quotesTotal)}` },
+    { label: 'Active orders', value: `${allDocuments.filter(d => d.type === 'order').length} · ${formatKshs(ordersTotal)}` },
+    { label: 'Outstanding invoices', value: `${outstandingInvoices.length} · ${formatKshs(outstandingTotal)}`, highlight: true },
+    { label: 'Revenue collected', value: `${receipts.length} · ${formatKshs(collectedTotal)}` }
+  ];
+  document.getElementById('accountingSummary').innerHTML = cards.map(card => `<div${card.highlight ? ' class="accounting-highlight"' : ''}><span>${escapeHtml(card.label)}</span><strong>${card.value}</strong></div>`).join('');
+}
+
+function setDocumentsFilter(filter) {
+  documentsFilter = filter;
+  document.querySelectorAll('.documents-filter-button').forEach(button => {
+    button.classList.toggle('is-active', button.dataset.docFilter === filter);
+  });
+  renderDocumentsTable();
+}
+
+function documentStatusClass(status) {
+  const normalized = String(status || '').toUpperCase();
+  if (normalized === 'PAID') return 'is-paid';
+  if (normalized === 'ACTIVE') return 'is-active';
+  if (normalized === 'QUOTED') return 'is-quoted';
+  return 'is-pending';
+}
+
+function renderDocumentsTable() {
+  const query = document.getElementById('documentsSearchInput').value.toLowerCase().trim();
+  const tableBody = document.getElementById('documentsTableBody');
+  const filtered = allDocuments.filter(doc => {
+    const matchesFilter = documentsFilter === 'all' || doc.type === documentsFilter;
+    const matchesQuery = !query || `${doc.reference} ${doc.clientName}`.toLowerCase().includes(query);
+    return matchesFilter && matchesQuery;
+  });
+
+  if (!filtered.length) {
+    tableBody.innerHTML = '<tr><td colspan="7" class="documents-empty">No documents match this view.</td></tr>';
+    return;
+  }
+
+  tableBody.innerHTML = filtered.map(doc => {
+    const actions = [`<button type="button" onclick="viewDocumentFromList('${doc.type}', '${escapeHtml(doc.reference)}')">View</button>`];
+    if (doc.type === 'order') actions.push(`<button type="button" onclick="convertOrderToInvoiceFromList('${escapeHtml(doc.reference)}')">To invoice</button>`);
+    if (doc.type === 'invoice' && doc.status !== 'PAID') actions.push(`<button type="button" onclick="confirmInvoicePaymentFromList('${escapeHtml(doc.reference)}')">Confirm payment</button>`);
+    return `<tr>
+      <td>${doc.timestamp ? new Date(doc.timestamp).toLocaleDateString('en-GB') : ''}</td>
+      <td><span class="document-type-tag">${escapeHtml(doc.type)}</span></td>
+      <td>${escapeHtml(doc.reference)}</td>
+      <td>${escapeHtml(doc.clientName || 'Valued Client')}</td>
+      <td>${formatKshs(doc.total)}</td>
+      <td><span class="document-status-tag ${documentStatusClass(doc.status)}">${escapeHtml(doc.status || '')}</span></td>
+      <td><div class="documents-row-actions">${actions.join('')}</div></td>
+    </tr>`;
+  }).join('');
+}
+
+function viewDocumentFromList(type, reference) {
+  const doc = allDocuments.find(entry => entry.type === type && entry.reference === reference);
+  if (!doc) return;
+  currentDocument = doc;
+  openDocumentPreview();
+}
+
+async function convertOrderToInvoiceFromList(orderReference) {
+  try {
+    const response = await fetch(API_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+      body: JSON.stringify({ action: 'convert_order_to_invoice', orderReference })
+    });
+    const result = await response.json();
+    if (result.status !== 'success') throw new Error(result.message || 'Invoice creation failed.');
+    await loadDocumentsTracker();
+  } catch (error) {
+    console.error('Order to invoice conversion failed:', error);
+    alert('The order could not be converted to an invoice. Please try again.');
+  }
+}
+
+async function confirmInvoicePaymentFromList(invoiceReference) {
+  const paymentMethod = prompt('Payment method (cash, mpesa, or paybill):', 'cash');
+  if (!paymentMethod) return;
+  const paymentReference = prompt('Payment reference or transaction code (optional):', '') || '';
+  try {
+    const response = await fetch(API_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+      body: JSON.stringify({ action: 'confirm_invoice_payment', invoiceReference, paymentMethod, paymentReference })
+    });
+    const result = await response.json();
+    if (result.status !== 'success') throw new Error(result.message || 'Payment confirmation failed.');
+    await loadDocumentsTracker();
+  } catch (error) {
+    console.error('Invoice payment confirmation failed:', error);
+    alert('The payment could not be confirmed. Please try again.');
+  }
+}
+
+async function generatePDF(docType, docRef) {
+  if (!currentDocument || currentDocument.reference !== docRef) return;
+  try {
+    const surface = document.getElementById('documentRenderSurface');
+    const canvas = await html2canvas(surface, { backgroundColor: '#ffffff', scale: 2, useCORS: true });
+    const { jsPDF } = window.jspdf;
+    const pdf = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
+    const width = 180;
+    const height = canvas.height * width / canvas.width;
+    pdf.addImage(canvas.toDataURL('image/jpeg', .95), 'JPEG', 15, 15, width, height);
+    pdf.save(`Cavalry-${docType}-${docRef}.pdf`);
+  } catch (error) {
+    console.error('Document PDF generation failed:', error);
+    alert('The document PDF could not be generated. Please try again.');
+  }
+}
+
+async function generateJPEG(docType, docRef) {
+  if (!currentDocument || currentDocument.reference !== docRef) return;
+  try {
+    const canvas = await html2canvas(document.getElementById('documentRenderSurface'), { backgroundColor: '#ffffff', scale: 2, useCORS: true });
+    const link = document.createElement('a');
+    link.download = `Cavalry-${docType}-${docRef}.jpg`;
+    link.href = canvas.toDataURL('image/jpeg', .95);
+    link.click();
+  } catch (error) {
+    console.error('Document JPEG generation failed:', error);
+    alert('The document JPEG could not be generated. Please try again.');
+  }
+}
+
+async function shareDocumentViaWhatsApp() {
+  if (!currentDocument) return;
+  await generateJPEG(currentDocument.type, currentDocument.reference);
+  const items = (currentDocument.items || []).map((item, index) => `${index + 1}. ${item.quantity} x ${item.title} - Kshs. ${Number(item.total || 0).toFixed(2)}`).join('\n');
+  const message = `*CAVALRY PUBLISHERS ${String(currentDocument.type || 'DOCUMENT').toUpperCase()}*\nReference: ${currentDocument.reference}\nStatus: ${currentDocument.status || 'PENDING'}\nClient: ${currentDocument.clientName || 'Valued Client'}\n\n${items}\n\n*TOTAL: Kshs. ${Number(currentDocument.total || 0).toLocaleString('en-US', { minimumFractionDigits: 2 })}*\n\nDocument image/PDF has been generated for download.`;
+  window.open(`https://wa.me/${COMPANY_WHATSAPP}?text=${encodeURIComponent(message)}`, '_blank');
 }
 
 function buildCheckoutWhatsAppMessage(order) {
@@ -1198,6 +1458,9 @@ document.getElementById('staffLoginModal').addEventListener('click', event => {
 document.getElementById('checkoutModal').addEventListener('click', event => {
   if (event.target.id === 'checkoutModal') closeCheckoutModal();
 });
+document.getElementById('documentPreviewModal').addEventListener('click', event => {
+  if (event.target.id === 'documentPreviewModal') closeDocumentPreview();
+});
 document.getElementById('bookDetailModal').addEventListener('click', event => {
   if (event.target.id === 'bookDetailModal') closeBookDetails();
 });
@@ -1205,6 +1468,7 @@ document.addEventListener('keydown', event => {
   if (event.key === 'Escape') closeCustomModal();
   if (event.key === 'Escape') closeStaffLoginModal();
   if (event.key === 'Escape') closeCheckoutModal();
+  if (event.key === 'Escape') closeDocumentPreview();
   if (event.key === 'Escape') closeCart();
   if (event.key === 'Escape') closeBookDetails();
 });

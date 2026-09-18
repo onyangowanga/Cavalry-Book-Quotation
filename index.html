@@ -39,6 +39,7 @@
       <button class="app-tab is-active" id="catalogueTabButton" role="tab" aria-selected="true" aria-controls="catalogueTabPanel" onclick="switchAppTab('catalogue')">Catalogue quote</button>
       <button class="app-tab" id="massTabButton" role="tab" aria-selected="false" aria-controls="massTabPanel" onclick="switchAppTab('mass')">Mass printing</button>
       <button class="app-tab" id="offsetTabButton" role="tab" aria-selected="false" aria-controls="offsetTabPanel" onclick="switchAppTab('offset')" style="display:none;">Admin offset</button>
+      <button class="app-tab" id="documentsTabButton" role="tab" aria-selected="false" aria-controls="documentsTabPanel" onclick="switchAppTab('documents')" style="display:none;">Documents &amp; accounts</button>
     </nav>
 
     <div id="catalogueTabPanel" class="tab-panel is-active" role="tabpanel" aria-labelledby="catalogueTabButton">
@@ -226,6 +227,39 @@
         <pre id="offsetResult" class="offset-result">Enter your specifications and calculate an offset quote.</pre>
       </div>
     </section>
+
+    <section id="documentsTabPanel" class="tab-panel documents-panel" role="tabpanel" aria-labelledby="documentsTabButton" hidden>
+      <div class="offset-heading">
+        <div>
+          <div class="eyebrow">Admin</div>
+          <h2>Documents &amp; accounts</h2>
+          <p>Track every quote, order, invoice and receipt, and confirm payments.</p>
+        </div>
+        <button class="refresh-btn" type="button" onclick="loadDocumentsTracker()">Refresh</button>
+      </div>
+
+      <div class="accounting-summary" id="accountingSummary"></div>
+
+      <div class="documents-toolbar">
+        <div class="documents-filter" role="group" aria-label="Filter by document type">
+          <button type="button" class="documents-filter-button is-active" data-doc-filter="all" onclick="setDocumentsFilter('all')">All</button>
+          <button type="button" class="documents-filter-button" data-doc-filter="quotation" onclick="setDocumentsFilter('quotation')">Quotes</button>
+          <button type="button" class="documents-filter-button" data-doc-filter="order" onclick="setDocumentsFilter('order')">Orders</button>
+          <button type="button" class="documents-filter-button" data-doc-filter="invoice" onclick="setDocumentsFilter('invoice')">Invoices</button>
+          <button type="button" class="documents-filter-button" data-doc-filter="receipt" onclick="setDocumentsFilter('receipt')">Receipts</button>
+        </div>
+        <div class="search-wrap documents-search">
+          <input type="search" id="documentsSearchInput" name="documentsSearchQuery" placeholder="Search by reference or client..." oninput="renderDocumentsTable()" autocomplete="off">
+        </div>
+      </div>
+
+      <div class="documents-table-wrap">
+        <table class="documents-table">
+          <thead><tr><th>Date</th><th>Type</th><th>Reference</th><th>Client</th><th>Total (Kshs)</th><th>Status</th><th>Actions</th></tr></thead>
+          <tbody id="documentsTableBody"><tr><td colspan="7" class="documents-empty">Loading documents...</td></tr></tbody>
+        </table>
+      </div>
+    </section>
   </main>
 
   <div id="drawerBackdrop" class="drawer-backdrop" onclick="closeCart()"></div>
@@ -280,6 +314,25 @@
         <button class="whatsapp-btn" type="button" onclick="sendCheckoutToWhatsApp()">Send order to WhatsApp</button>
         <button class="custom-btn" type="button" onclick="submitCheckoutPayment()">Pay &amp; Confirm Order</button>
       </div>
+      <div id="checkoutDocumentActions" class="checkout-document-actions" hidden>
+        <button class="refresh-btn" type="button" onclick="openDocumentPreview()">Preview document</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="documentPreviewModal" class="modal-overlay checkout-overlay" role="dialog" aria-modal="true" aria-labelledby="documentPreviewTitle">
+    <div class="document-preview-card">
+      <div class="modal-header">
+        <div><div class="eyebrow">Document preview</div><h3 id="documentPreviewTitle">Invoice</h3></div>
+        <button class="modal-close-button" aria-label="Close document preview" onclick="closeDocumentPreview()">&times;</button>
+      </div>
+      <div class="document-preview-toolbar">
+        <button class="refresh-btn" type="button" onclick="generatePDF(currentDocument.type, currentDocument.reference)">Download PDF</button>
+        <button class="refresh-btn" type="button" onclick="generateJPEG(currentDocument.type, currentDocument.reference)">Download JPEG</button>
+        <button class="whatsapp-btn" type="button" onclick="shareDocumentViaWhatsApp()">Share via WhatsApp</button>
+        <button class="custom-btn" type="button" id="confirmDocumentPaymentButton" onclick="confirmCurrentInvoicePayment()" hidden>Confirm payment</button>
+      </div>
+      <article id="documentRenderSurface" class="document-render-surface"></article>
     </div>
   </div>
 

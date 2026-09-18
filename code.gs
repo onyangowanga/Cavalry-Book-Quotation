@@ -90,6 +90,75 @@ function parseSpecialPrice(value) {
   return Number.isFinite(price) && price >= 0 ? price : null;
 }
 
+function createDocumentReference(prefix) {
+  return prefix + '-' + Utilities.getUuid().replace(/-/g, '').slice(0, 8).toUpperCase();
+}
+
+function getDocumentSheet(ss, name) {
+  const headers = ['Timestamp', 'Reference', 'Parent Reference', 'Client Name', 'Client Phone', 'Items JSON', 'Subtotal (Kshs)', 'Discount (Kshs)', 'Total (Kshs)', 'Tax / Breakdown', 'Status', 'Payment Method', 'Payment Reference'];
+  let sheet = ss.getSheetByName(name);
+  if (!sheet) {
+    sheet = ss.insertSheet(name);
+    sheet.appendRow(headers);
+  }
+  return sheet;
+}
+
+function documentRecord(postData, reference, parentReference, status, paymentMethod, paymentReference) {
+  return [
+    new Date(), reference, parentReference || '', postData.clientName || 'Valued Client', postData.clientPhone || '',
+    JSON.stringify(postData.items || []), Number(postData.subtotal || 0), Number(postData.discount || 0),
+    Number(postData.total || 0), postData.taxBreakdown || '', status, paymentMethod || '', paymentReference || ''
+  ];
+}
+
+function findDocument(ss, sheetName, reference) {
+  const sheet = ss.getSheetByName(sheetName);
+  if (!sheet || sheet.getLastRow() < 2) return null;
+  const rows = sheet.getDataRange().getValues();
+  for (let index = 1; index < rows.length; index++) {
+    if (String(rows[index][1]).trim() === String(reference).trim()) {
+      return { sheet, rowNumber: index + 1, values: rows[index] };
+    }
+  }
+  return null;
+}
+
+function documentResponse(record, type) {
+  if (!record) return null;
+  const values = record.values;
+  if (type === 'quotation') {
+    return {
+      type, timestamp: values[0], reference: values[7] || '', parentReference: '',
+      clientName: values[1] || 'Valued Client', clientPhone: values[2] || '',
+      items: [], itemsSummary: values[3] || '', subtotal: Number(values[4] || 0),
+      discount: Number(values[5] || 0), total: Number(values[6] || 0),
+      taxBreakdown: '', status: 'QUOTED', paymentMethod: '', paymentReference: ''
+    };
+  }
+  let items = [];
+  try { items = JSON.parse(values[5] || '[]'); } catch (error) { items = []; }
+  return {
+    type, timestamp: values[0], reference: values[1], parentReference: values[2], clientName: values[3], clientPhone: values[4],
+    items, subtotal: Number(values[6] || 0), discount: Number(values[7] || 0), total: Number(values[8] || 0),
+    taxBreakdown: values[9] || '', status: values[10] || '', paymentMethod: values[11] || '', paymentReference: values[12] || ''
+  };
+}
+
+// Reads every row of a document sheet into a flat list for the admin tracking tab.
+function listDocumentsFromSheet(ss, sheetName, type) {
+  const sheet = ss.getSheetByName(sheetName);
+  if (!sheet || sheet.getLastRow() < 2) return [];
+  const rows = sheet.getDataRange().getValues();
+  const records = [];
+  for (let index = 1; index < rows.length; index++) {
+    const values = rows[index];
+    if (!values[0] && !values[1]) continue;
+    records.push(documentResponse({ sheet, rowNumber: index + 1, values }, type));
+  }
+  return records;
+}
+
 function getCatalogueCacheKey() {
   return 'quotation_catalogue_v1';
 }
@@ -216,7 +285,7 @@ function doPost(e) {
       let logSheet = ss.getSheetByName('quotes_log');
       if (!logSheet) {
         logSheet = ss.insertSheet('quotes_log');
-        logSheet.appendRow(['Timestamp', 'Client Name', 'Phone', 'Items Ordered', 'Subtotal (Kshs)', 'Discount (Kshs)', 'Total (Kshs)']);
+        logSheet.appendRow(['Timestamp', 'Client Name', 'Phone', 'Items Ordered', 'Subtotal (Kshs)', 'Discount (Kshs)', 'Total (Kshs)', 'Quote Reference']);
       }
 
       logSheet.appendRow([
@@ -226,11 +295,81 @@ function doPost(e) {
         postData.itemsSummary,
         postData.subtotal,
         postData.discount,
-        postData.total
+        postData.total,
+        postData.quotationNumber || ''
       ]);
 
       return ContentService
         .createTextOutput(JSON.stringify({ status: 'success', message: 'Quote logged successfully' }))
+        .setMimeType(ContentService.MimeType.JSON);
+    }
+
+    if (postData.action === 'submit_order' || postData.action === 'convert_quote_to_order') {
+      const orderReference = postData.orderReference || createDocumentReference('ORD');
+      const orderSheet = getDocumentSheet(ss, 'orders_log');
+      orderSheet.appendRow(documentRecord(postData, orderReference, postData.quoteReference || postData.quotationNumber, 'ACTIVE', postData.paymentMethod, postData.transactionCode || postData.paymentPhone));
+      return ContentService
+        .createTextOutput(JSON.stringify({ status: 'success', documentType: 'order', reference: orderReference, message: 'Order created successfully.' }))
+        .setMimeType(ContentService.MimeType.JSON);
+    }
+
+    if (postData.action === 'convert_order_to_invoice') {
+      const order = findDocument(ss, 'orders_log', postData.orderReference);
+      if (!order) throw new Error('Order not found.');
+      const orderData = documentResponse(order, 'order');
+      const invoiceReference = createDocumentReference('INV');
+      const invoiceSheet = getDocumentSheet(ss, 'invoices_log');
+      invoiceSheet.appendRow(documentRecord({ ...orderData, items: orderData.items }, invoiceReference, orderData.reference, 'PENDING', orderData.paymentMethod, orderData.paymentReference));
+      return ContentService
+        .createTextOutput(JSON.stringify({ status: 'success', documentType: 'invoice', reference: invoiceReference, data: documentResponse(findDocument(ss, 'invoices_log', invoiceReference), 'invoice') }))
+        .setMimeType(ContentService.MimeType.JSON);
+    }
+
+    if (postData.action === 'confirm_invoice_payment') {
+      const invoice = findDocument(ss, 'invoices_log', postData.invoiceReference);
+      if (!invoice) throw new Error('Invoice not found.');
+      invoice.sheet.getRange(invoice.rowNumber, 11).setValue('PAID');
+      const receiptReference = createDocumentReference('RCT');
+      const invoiceData = documentResponse(invoice, 'invoice');
+      const receiptSheet = getDocumentSheet(ss, 'receipts_log');
+      receiptSheet.appendRow(documentRecord({ ...invoiceData, items: invoiceData.items, paymentMethod: postData.paymentMethod, transactionCode: postData.paymentReference }, receiptReference, invoiceData.reference, 'PAID', postData.paymentMethod, postData.paymentReference));
+      return ContentService
+        .createTextOutput(JSON.stringify({ status: 'success', documentType: 'receipt', reference: receiptReference, data: documentResponse(findDocument(ss, 'receipts_log', receiptReference), 'receipt') }))
+        .setMimeType(ContentService.MimeType.JSON);
+    }
+
+    if (postData.action === 'get_document_data') {
+      const reference = String(postData.reference || '').trim();
+      const sources = [['quotes_log', 'quotation'], ['orders_log', 'order'], ['invoices_log', 'invoice'], ['receipts_log', 'receipt']];
+      for (const source of sources) {
+        const record = findDocument(ss, source[0], reference);
+        if (record) {
+          return ContentService
+            .createTextOutput(JSON.stringify({ status: 'success', data: documentResponse(record, source[1]) }))
+            .setMimeType(ContentService.MimeType.JSON);
+        }
+      }
+      return ContentService
+        .createTextOutput(JSON.stringify({ status: 'error', message: 'Document not found.' }))
+        .setMimeType(ContentService.MimeType.JSON);
+    }
+
+    // Admin-only: returns every quote/order/invoice/receipt for the tracking & accounting tab.
+    if (postData.action === 'list_documents') {
+      if (String(postData.staffPassword || '').trim() !== getStaffPassword(ss)) {
+        return ContentService
+          .createTextOutput(JSON.stringify({ status: 'error', message: 'Staff authorization required.' }))
+          .setMimeType(ContentService.MimeType.JSON);
+      }
+      const documents = [
+        ...listDocumentsFromSheet(ss, 'quotes_log', 'quotation'),
+        ...listDocumentsFromSheet(ss, 'orders_log', 'order'),
+        ...listDocumentsFromSheet(ss, 'invoices_log', 'invoice'),
+        ...listDocumentsFromSheet(ss, 'receipts_log', 'receipt')
+      ].sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
+
+      return ContentService
+        .createTextOutput(JSON.stringify({ status: 'success', data: documents }))
         .setMimeType(ContentService.MimeType.JSON);
     }
 
