@@ -56,7 +56,15 @@ const MASS_COVER_GENERAL_PER_COPY = { A5: 30, A4: 45, A6: 25 };
 const CLIENT_PROFIT_MARKUP = 0.20;
 const ADMIN_PROFIT_MARKUP = 0.20;
 
-window.addEventListener('load', () => { loadCatalog(); updateStaffUI(); calculateClientMassQuote('booklet'); });
+window.addEventListener('load', () => { loadCatalog(); updateStaffUI(); calculateClientMassQuote('booklet'); syncTopbarHeight(); });
+window.addEventListener('resize', syncTopbarHeight);
+
+// Keeps the fixed header's real height in sync so page content never sits underneath it.
+function syncTopbarHeight() {
+  const topbar = document.querySelector('.topbar');
+  if (!topbar) return;
+  document.documentElement.style.setProperty('--topbar-height', `${topbar.offsetHeight}px`);
+}
 
 function loadCatalog() {
     showCatalogProgress(8, 'Connecting to the catalogue...');
@@ -181,6 +189,7 @@ function updateStaffUI() {
   }
   renderCart();
   if (!isStaff && (activeAppTab === 'offset' || activeAppTab === 'documents')) switchAppTab('mass');
+  syncTopbarHeight();
 }
 
 function getDiscountValue() {
