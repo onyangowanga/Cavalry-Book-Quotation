@@ -1,9 +1,75 @@
-function getStaffPassword(ss) {
+// Reads the 'security' sheet as a username/password table (col A = username, col B = password, row 1 = headers).
+function getStaffCredentials(ss) {
   const securitySheet = ss.getSheetByName('security');
   if (!securitySheet) {
     throw new Error("Tab named 'security' not found.");
   }
-  return String(securitySheet.getRange('A1').getDisplayValue() || '').trim();
+  const rows = securitySheet.getDataRange().getDisplayValues();
+  const credentials = [];
+  for (let i = 1; i < rows.length; i++) {
+    const username = String(rows[i][0] || '').trim();
+    const password = String(rows[i][1] || '').trim();
+    if (!username && !password) continue;
+    credentials.push({ username, password });
+  }
+  return credentials;
+}
+
+// Any valid password from the security sheet grants access to shared admin-only routes.
+function isValidStaffPassword(ss, password) {
+  const supplied = String(password || '').trim();
+  if (!supplied) return false;
+  return getStaffCredentials(ss).some(entry => entry.password === supplied);
+}
+
+function verifyStaffCredentials(ss, username, password) {
+  const suppliedUsername = String(username || '').trim().toLowerCase();
+  const suppliedPassword = String(password || '').trim();
+  if (!suppliedUsername || !suppliedPassword) return false;
+  return getStaffCredentials(ss).some(entry => entry.username.toLowerCase() === suppliedUsername && entry.password === suppliedPassword);
+}
+
+// Keeps a running directory of clients so staff aren't re-typing the same name/phone every time.
+function getCustomersSheet(ss) {
+  let sheet = ss.getSheetByName('customers');
+  if (!sheet) {
+    sheet = ss.insertSheet('customers');
+    sheet.appendRow(['Client Name', 'Client Phone', 'Last Used']);
+  }
+  return sheet;
+}
+
+function upsertCustomer(ss, name, phone) {
+  const trimmedName = String(name || '').trim();
+  const trimmedPhone = String(phone || '').trim();
+  if (!trimmedName && !trimmedPhone) return;
+  const sheet = getCustomersSheet(ss);
+  const rows = sheet.getDataRange().getValues();
+  for (let i = 1; i < rows.length; i++) {
+    const rowName = String(rows[i][0] || '').trim();
+    const rowPhone = String(rows[i][1] || '').trim();
+    const samePhone = trimmedPhone && rowPhone === trimmedPhone;
+    const sameName = !trimmedPhone && !rowPhone && rowName.toLowerCase() === trimmedName.toLowerCase();
+    if (samePhone || sameName) {
+      sheet.getRange(i + 1, 1, 1, 3).setValues([[trimmedName || rowName, trimmedPhone || rowPhone, new Date()]]);
+      return;
+    }
+  }
+  sheet.appendRow([trimmedName, trimmedPhone, new Date()]);
+}
+
+function listCustomers(ss) {
+  const sheet = ss.getSheetByName('customers');
+  if (!sheet || sheet.getLastRow() < 2) return [];
+  const rows = sheet.getDataRange().getValues();
+  const customers = [];
+  for (let i = 1; i < rows.length; i++) {
+    const name = String(rows[i][0] || '').trim();
+    const phone = String(rows[i][1] || '').trim();
+    if (!name && !phone) continue;
+    customers.push({ name, phone });
+  }
+  return customers;
 }
 
 /**
@@ -112,13 +178,32 @@ function documentRecord(postData, reference, parentReference, status, paymentMet
   ];
 }
 
+// Locates a document row by searching for its reference directly (via TextFinder) instead of
+// guessing which column holds it from the row's width - this works reliably for both the new
+// 13-column layout and legacy quotes_log rows (whose reference lives in column H, not B).
 function findDocument(ss, sheetName, reference) {
+  const sheet = ss.getSheetByName(sheetName);
+  if (!sheet || sheet.getLastRow() < 2) return null;
+  const trimmedReference = String(reference || '').trim();
+  if (!trimmedReference) return null;
+  const match = sheet.createTextFinder(trimmedReference).matchEntireCell(true).useRegularExpression(false).findNext();
+  if (!match) return null;
+  const rowNumber = match.getRow();
+  const width = Math.max(sheet.getLastColumn(), 13);
+  const values = sheet.getRange(rowNumber, 1, 1, width).getValues()[0];
+  const isLegacyQuote = sheetName === 'quotes_log' && match.getColumn() !== 2;
+  return { sheet, rowNumber, values, isLegacyQuote };
+}
+
+// Prevents duplicate conversions (e.g. two invoices from the same quotation).
+function findDocumentByParent(ss, sheetName, parentReference) {
   const sheet = ss.getSheetByName(sheetName);
   if (!sheet || sheet.getLastRow() < 2) return null;
   const rows = sheet.getDataRange().getValues();
   for (let index = 1; index < rows.length; index++) {
-    if (String(rows[index][1]).trim() === String(reference).trim()) {
-      return { sheet, rowNumber: index + 1, values: rows[index] };
+    const values = rows[index];
+    if (String(values[2] || '').trim() === String(parentReference).trim()) {
+      return { sheet, rowNumber: index + 1, values };
     }
   }
   return null;
@@ -127,13 +212,14 @@ function findDocument(ss, sheetName, reference) {
 function documentResponse(record, type) {
   if (!record) return null;
   const values = record.values;
-  if (type === 'quotation') {
+  if (type === 'quotation' && record.isLegacyQuote) {
+    // Legacy quotes_log rows (pre-lifecycle-redesign) only ever had one state: quoted.
     return {
       type, timestamp: values[0], reference: values[7] || '', parentReference: '',
       clientName: values[1] || 'Valued Client', clientPhone: values[2] || '',
       items: [], itemsSummary: values[3] || '', subtotal: Number(values[4] || 0),
       discount: Number(values[5] || 0), total: Number(values[6] || 0),
-      taxBreakdown: '', status: 'QUOTED', paymentMethod: '', paymentReference: ''
+      taxBreakdown: '', status: 'ACTIVE', paymentMethod: '', paymentReference: ''
     };
   }
   let items = [];
@@ -154,7 +240,9 @@ function listDocumentsFromSheet(ss, sheetName, type) {
   for (let index = 1; index < rows.length; index++) {
     const values = rows[index];
     if (!values[0] && !values[1]) continue;
-    records.push(documentResponse({ sheet, rowNumber: index + 1, values }, type));
+    // New-format rows always carry a QUO-prefixed reference in column B; anything else is a legacy row.
+    const isLegacyQuote = sheetName === 'quotes_log' && !/^QUO-/i.test(String(values[1] || '').trim());
+    records.push(documentResponse({ sheet, rowNumber: index + 1, values, isLegacyQuote }, type));
   }
   return records;
 }
@@ -255,15 +343,18 @@ function doGet(e) {
 }
 
 function doPost(e) {
+  // Serializes concurrent requests so one execution's sheet writes are always fully committed
+  // before another execution reads them (prevents "quotation not found" races on rapid double actions).
+  const lock = LockService.getScriptLock();
+  lock.waitLock(15000);
   try {
     const ss = SpreadsheetApp.getActiveSpreadsheet();
     const postData = JSON.parse(e.postData.contents);
 
     if (postData.action === 'login') {
-      const configuredPassword = getStaffPassword(ss);
-      const suppliedPassword = String(postData.password || '').trim();
+      const isValid = verifyStaffCredentials(ss, postData.username, postData.password);
       return ContentService
-        .createTextOutput(JSON.stringify({ status: suppliedPassword && suppliedPassword === configuredPassword ? 'success' : 'error', message: suppliedPassword && suppliedPassword === configuredPassword ? 'Login successful.' : 'Incorrect password.' }))
+        .createTextOutput(JSON.stringify({ status: isValid ? 'success' : 'error', message: isValid ? 'Login successful.' : 'Incorrect username or password.' }))
         .setMimeType(ContentService.MimeType.JSON);
     }
 
@@ -278,69 +369,129 @@ function doPost(e) {
         .setMimeType(ContentService.MimeType.JSON);
     }
 
+    // Admin-only: returns the saved client directory so staff can autofill repeat customers.
+    if (postData.action === 'list_customers') {
+      if (!isValidStaffPassword(ss, postData.staffPassword)) {
+        return ContentService
+          .createTextOutput(JSON.stringify({ status: 'error', message: 'Staff authorization required.' }))
+          .setMimeType(ContentService.MimeType.JSON);
+      }
+      return ContentService
+        .createTextOutput(JSON.stringify({ status: 'success', data: listCustomers(ss) }))
+        .setMimeType(ContentService.MimeType.JSON);
+    }
+
     // -------------------------------------------------------------
-    // ROUTE 2: Log Quote into 'quotes_log'
+    // ROUTE 2: Log Quote into 'quotes_log' (Quotation stage)
     // -------------------------------------------------------------
     if (postData.action === 'log_quote') {
-      let logSheet = ss.getSheetByName('quotes_log');
-      if (!logSheet) {
-        logSheet = ss.insertSheet('quotes_log');
-        logSheet.appendRow(['Timestamp', 'Client Name', 'Phone', 'Items Ordered', 'Subtotal (Kshs)', 'Discount (Kshs)', 'Total (Kshs)', 'Quote Reference']);
+      const quoteReference = postData.quotationNumber || createDocumentReference('QUO');
+      const quoteSheet = getDocumentSheet(ss, 'quotes_log');
+      quoteSheet.appendRow(documentRecord(postData, quoteReference, '', 'ACTIVE', '', ''));
+      SpreadsheetApp.flush();
+      upsertCustomer(ss, postData.clientName, postData.clientPhone);
+      return ContentService
+        .createTextOutput(JSON.stringify({ status: 'success', documentType: 'quotation', reference: quoteReference, message: 'Quote logged successfully.' }))
+        .setMimeType(ContentService.MimeType.JSON);
+    }
+
+    // Quotation -> Invoice. Adds optional extra charges (e.g. delivery) and blocks duplicate conversion.
+    if (postData.action === 'convert_quote_to_invoice') {
+      const quote = findDocument(ss, 'quotes_log', postData.quotationReference);
+      if (!quote) throw new Error('Quotation not found: ' + postData.quotationReference);
+      const quoteData = documentResponse(quote, 'quotation');
+      if (quoteData.status && quoteData.status !== 'ACTIVE') {
+        throw new Error('This quotation has already been converted to an invoice.');
       }
+      if (findDocumentByParent(ss, 'invoices_log', quoteData.reference)) {
+        throw new Error('An invoice already exists for this quotation.');
+      }
+      upsertCustomer(ss, postData.clientName, postData.clientPhone);
 
-      logSheet.appendRow([
-        new Date(),
-        postData.clientName || 'Anonymous Client',
-        postData.clientPhone || 'N/A',
-        postData.itemsSummary,
-        postData.subtotal,
-        postData.discount,
-        postData.total,
-        postData.quotationNumber || ''
-      ]);
+      const extraCharges = Array.isArray(postData.extraCharges) ? postData.extraCharges : [];
+      const extraItems = extraCharges
+        .filter(charge => charge && Number(charge.amount) > 0)
+        .map(charge => ({ title: charge.label || 'Additional charge', quantity: 1, unitPrice: Number(charge.amount), total: Number(charge.amount), mode: '', size: '' }));
+      const items = [...(quoteData.items || []), ...extraItems];
+      const extraTotal = extraItems.reduce((sum, item) => sum + item.total, 0);
+      const subtotal = Number(quoteData.subtotal || 0) + extraTotal;
+      const total = Number(quoteData.total || 0) + extraTotal;
 
-      return ContentService
-        .createTextOutput(JSON.stringify({ status: 'success', message: 'Quote logged successfully' }))
-        .setMimeType(ContentService.MimeType.JSON);
-    }
-
-    if (postData.action === 'submit_order' || postData.action === 'convert_quote_to_order') {
-      const orderReference = postData.orderReference || createDocumentReference('ORD');
-      const orderSheet = getDocumentSheet(ss, 'orders_log');
-      orderSheet.appendRow(documentRecord(postData, orderReference, postData.quoteReference || postData.quotationNumber, 'ACTIVE', postData.paymentMethod, postData.transactionCode || postData.paymentPhone));
-      return ContentService
-        .createTextOutput(JSON.stringify({ status: 'success', documentType: 'order', reference: orderReference, message: 'Order created successfully.' }))
-        .setMimeType(ContentService.MimeType.JSON);
-    }
-
-    if (postData.action === 'convert_order_to_invoice') {
-      const order = findDocument(ss, 'orders_log', postData.orderReference);
-      if (!order) throw new Error('Order not found.');
-      const orderData = documentResponse(order, 'order');
       const invoiceReference = createDocumentReference('INV');
       const invoiceSheet = getDocumentSheet(ss, 'invoices_log');
-      invoiceSheet.appendRow(documentRecord({ ...orderData, items: orderData.items }, invoiceReference, orderData.reference, 'PENDING', orderData.paymentMethod, orderData.paymentReference));
+      invoiceSheet.appendRow(documentRecord({
+        clientName: postData.clientName || quoteData.clientName,
+        clientPhone: postData.clientPhone || quoteData.clientPhone,
+        items, subtotal, discount: quoteData.discount || 0, total
+      }, invoiceReference, quoteData.reference, 'PENDING', '', ''));
+
+      // Mark the quotation as converted so it cannot be turned into a second invoice.
+      quote.sheet.getRange(quote.rowNumber, quote.isLegacyQuote ? quote.values.length + 1 : 11).setValue('CONVERTED');
+
       return ContentService
         .createTextOutput(JSON.stringify({ status: 'success', documentType: 'invoice', reference: invoiceReference, data: documentResponse(findDocument(ss, 'invoices_log', invoiceReference), 'invoice') }))
         .setMimeType(ContentService.MimeType.JSON);
     }
 
+    // Invoice -> Receipt (payment confirmation), which immediately opens a production Order.
     if (postData.action === 'confirm_invoice_payment') {
       const invoice = findDocument(ss, 'invoices_log', postData.invoiceReference);
-      if (!invoice) throw new Error('Invoice not found.');
-      invoice.sheet.getRange(invoice.rowNumber, 11).setValue('PAID');
-      const receiptReference = createDocumentReference('RCT');
+      if (!invoice) throw new Error('Invoice not found: ' + postData.invoiceReference);
       const invoiceData = documentResponse(invoice, 'invoice');
+      if (invoiceData.status === 'PAID') {
+        throw new Error('This invoice has already been paid.');
+      }
+      if (findDocumentByParent(ss, 'receipts_log', invoiceData.reference)) {
+        throw new Error('A receipt has already been recorded for this invoice.');
+      }
+
+      invoice.sheet.getRange(invoice.rowNumber, 11).setValue('PAID');
+      invoice.sheet.getRange(invoice.rowNumber, 12).setValue(postData.paymentMethod || '');
+      invoice.sheet.getRange(invoice.rowNumber, 13).setValue(postData.paymentReference || '');
+
+      const receiptReference = createDocumentReference('RCT');
       const receiptSheet = getDocumentSheet(ss, 'receipts_log');
-      receiptSheet.appendRow(documentRecord({ ...invoiceData, items: invoiceData.items, paymentMethod: postData.paymentMethod, transactionCode: postData.paymentReference }, receiptReference, invoiceData.reference, 'PAID', postData.paymentMethod, postData.paymentReference));
+      receiptSheet.appendRow(documentRecord({ ...invoiceData, items: invoiceData.items }, receiptReference, invoiceData.reference, 'PAID', postData.paymentMethod, postData.paymentReference));
+
+      // Receipt -> Order: production tracking starts automatically once payment is confirmed.
+      const orderReference = createDocumentReference('ORD');
+      const orderSheet = getDocumentSheet(ss, 'orders_log');
+      orderSheet.appendRow(documentRecord({ ...invoiceData, items: invoiceData.items }, orderReference, receiptReference, 'IN_PRODUCTION', postData.paymentMethod, postData.paymentReference));
+
       return ContentService
-        .createTextOutput(JSON.stringify({ status: 'success', documentType: 'receipt', reference: receiptReference, data: documentResponse(findDocument(ss, 'receipts_log', receiptReference), 'receipt') }))
+        .createTextOutput(JSON.stringify({
+          status: 'success', documentType: 'receipt', reference: receiptReference, orderReference: orderReference,
+          data: documentResponse(findDocument(ss, 'receipts_log', receiptReference), 'receipt')
+        }))
+        .setMimeType(ContentService.MimeType.JSON);
+    }
+
+    // Order -> Delivery note. Marks production complete and blocks duplicate delivery notes.
+    if (postData.action === 'complete_order') {
+      const order = findDocument(ss, 'orders_log', postData.orderReference);
+      if (!order) throw new Error('Order not found: ' + postData.orderReference);
+      const orderData = documentResponse(order, 'order');
+      if (orderData.status === 'COMPLETED') {
+        throw new Error('This order has already been completed.');
+      }
+      if (findDocumentByParent(ss, 'deliveries_log', orderData.reference)) {
+        throw new Error('A delivery note has already been issued for this order.');
+      }
+
+      order.sheet.getRange(order.rowNumber, 11).setValue('COMPLETED');
+
+      const deliveryReference = createDocumentReference('DN');
+      const deliverySheet = getDocumentSheet(ss, 'deliveries_log');
+      deliverySheet.appendRow(documentRecord({ ...orderData, items: orderData.items }, deliveryReference, orderData.reference, 'ISSUED', orderData.paymentMethod, orderData.paymentReference));
+
+      return ContentService
+        .createTextOutput(JSON.stringify({ status: 'success', documentType: 'delivery', reference: deliveryReference, data: documentResponse(findDocument(ss, 'deliveries_log', deliveryReference), 'delivery') }))
         .setMimeType(ContentService.MimeType.JSON);
     }
 
     if (postData.action === 'get_document_data') {
       const reference = String(postData.reference || '').trim();
-      const sources = [['quotes_log', 'quotation'], ['orders_log', 'order'], ['invoices_log', 'invoice'], ['receipts_log', 'receipt']];
+      const sources = [['quotes_log', 'quotation'], ['invoices_log', 'invoice'], ['receipts_log', 'receipt'], ['orders_log', 'order'], ['deliveries_log', 'delivery']];
       for (const source of sources) {
         const record = findDocument(ss, source[0], reference);
         if (record) {
@@ -356,16 +507,17 @@ function doPost(e) {
 
     // Admin-only: returns every quote/order/invoice/receipt for the tracking & accounting tab.
     if (postData.action === 'list_documents') {
-      if (String(postData.staffPassword || '').trim() !== getStaffPassword(ss)) {
+      if (!isValidStaffPassword(ss, postData.staffPassword)) {
         return ContentService
           .createTextOutput(JSON.stringify({ status: 'error', message: 'Staff authorization required.' }))
           .setMimeType(ContentService.MimeType.JSON);
       }
       const documents = [
         ...listDocumentsFromSheet(ss, 'quotes_log', 'quotation'),
-        ...listDocumentsFromSheet(ss, 'orders_log', 'order'),
         ...listDocumentsFromSheet(ss, 'invoices_log', 'invoice'),
-        ...listDocumentsFromSheet(ss, 'receipts_log', 'receipt')
+        ...listDocumentsFromSheet(ss, 'receipts_log', 'receipt'),
+        ...listDocumentsFromSheet(ss, 'orders_log', 'order'),
+        ...listDocumentsFromSheet(ss, 'deliveries_log', 'delivery')
       ].sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
 
       return ContentService
@@ -375,7 +527,7 @@ function doPost(e) {
 
     // ROUTE 3: Save or clear a permanent special catalogue price in the books sheet
     if (postData.action === 'set_special_price') {
-      if (String(postData.staffPassword || '').trim() !== getStaffPassword(ss)) {
+      if (!isValidStaffPassword(ss, postData.staffPassword)) {
         return ContentService
           .createTextOutput(JSON.stringify({ status: 'error', message: 'Staff authorization required.' }))
           .setMimeType(ContentService.MimeType.JSON);
@@ -462,5 +614,7 @@ function doPost(e) {
     return ContentService
       .createTextOutput(JSON.stringify({ status: 'error', message: err.toString() }))
       .setMimeType(ContentService.MimeType.JSON);
+  } finally {
+    lock.releaseLock();
   }
 }

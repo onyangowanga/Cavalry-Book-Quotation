@@ -48,8 +48,10 @@
         <div class="catalog-toolbar">
           <button class="custom-btn" onclick="openCustomModal()">+ Quote Other Book/ PDF</button>
           <div class="search-wrap">
-            <input type="search" id="searchInput" name="catalogSearchQuery"  placeholder="Search our catalogue..." oninput="filterCatalog()" autocomplete="off" data-lpignore="true" data-1p-ignore="true" data-form-type="other">
+            <input type="text" id="searchInput" name="catalogSearchQuery" list="bookTitlesList" placeholder="Search our catalogue..." oninput="filterCatalog()" autocomplete="off" data-lpignore="true" data-1p-ignore="true" data-form-type="other">
+            <datalist id="bookTitlesList"></datalist>
           </div>
+          <datalist id="customerNamesList"></datalist>
           <div class="catalog-actions">
             <button class="refresh-btn" id="refreshCatalogButton" onclick="refreshCatalog()" aria-label="Refresh catalogue"><span class="refresh-icon" aria-hidden="true">⟳</span><span>Refresh catalogue</span></button>
             <div class="view-toggle" aria-label="Catalogue view"><button id="gridViewButton" class="is-active" onclick="setCatalogueView('grid')">Thumbnails</button><button id="listViewButton" onclick="setCatalogueView('list')">List</button></div>
@@ -73,7 +75,7 @@
         </div>
         <div class="quote-body">
           <div class="quote-fields">
-            <label><span class="field-label">Your / Client Name</span><input id="clientName" type="text" placeholder="e.g. Peter Nyongesa"></label>
+            <label><span class="field-label">Your / Client Name</span><input id="clientName" type="text" list="customerNamesList" placeholder="e.g. Peter Nyongesa" autocomplete="off" onchange="applyCustomerAutofill('clientName', 'clientPhone', this.value)"></label>
             <label><span class="field-label">Phone Number</span><input id="clientPhone" type="tel" placeholder="e.g. 0712 345 678"></label>
           </div>
           <div id="cartItems" class="cart-items">
@@ -98,14 +100,14 @@
             <span class="cart-total" id="cartTotal">Kshs 0.00</span>
           </div>
 
+          <div class="cart-share-actions" role="group" aria-label="Share this quotation">
+            <button type="button" class="cart-share-button" onclick="shareCartQuotationWhatsApp()" aria-label="Share quotation on WhatsApp"><span aria-hidden="true">📲</span><span>WhatsApp</span></button>
+            <button type="button" class="cart-share-button" onclick="downloadCartQuotationPdf()" aria-label="Download quotation as PDF"><span aria-hidden="true">📥</span><span>PDF</span></button>
+            <button type="button" class="cart-share-button" onclick="downloadCartQuotationJpeg()" aria-label="Download quotation as JPEG"><span aria-hidden="true">🖼️</span><span>JPEG</span></button>
+          </div>
           <div class="drawer-actions">
             <button class="continue-btn" onclick="closeCart()">Continue shopping</button>
-            <button class="checkout-btn" onclick="openCheckoutModal()">Proceed to checkout</button>
-          </div>
-          <button class="whatsapp-btn" onclick="shareOnWhatsApp()">Share quote on WhatsApp</button>
-          <div class="download-actions">
-            <button class="download-pdf-btn" onclick="downloadQuotation('pdf')">Download PDF</button>
-            <button class="download-image-btn" onclick="downloadQuotation('jpeg')">Download JPEG</button>
+            <button class="checkout-btn" onclick="openInvoiceModal()">Proceed to checkout</button>
           </div>
         </div>
       </aside>
@@ -245,6 +247,7 @@
           <button type="button" class="documents-filter-button" data-doc-filter="order" onclick="setDocumentsFilter('order')">Orders</button>
           <button type="button" class="documents-filter-button" data-doc-filter="invoice" onclick="setDocumentsFilter('invoice')">Invoices</button>
           <button type="button" class="documents-filter-button" data-doc-filter="receipt" onclick="setDocumentsFilter('receipt')">Receipts</button>
+          <button type="button" class="documents-filter-button" data-doc-filter="delivery" onclick="setDocumentsFilter('delivery')">Deliveries</button>
         </div>
         <div class="search-wrap documents-search">
           <input type="search" id="documentsSearchInput" name="documentsSearchQuery" placeholder="Search by reference or client..." oninput="renderDocumentsTable()" autocomplete="off">
@@ -272,6 +275,7 @@
         <button aria-label="Close staff login dialog" onclick="closeStaffLoginModal()" style="border:0; background:none; font-size:1.4rem; cursor:pointer;">&times;</button>
       </div>
       <div class="modal-body">
+        <label><span class="field-label">Staff Username</span><input type="text" id="staffUsernameInput" autocomplete="username" placeholder="Enter username" onkeydown="if (event.key === 'Enter') { event.preventDefault(); document.getElementById('staffPasswordInput').focus(); }"></label>
         <label><span class="field-label">Staff Passcode</span><input type="password" id="staffPasswordInput" autocomplete="current-password" placeholder="Enter passcode" onkeydown="if (event.key === 'Enter') { event.preventDefault(); submitStaffLogin(); }"></label>
         <label class="password-visibility-toggle"><input type="checkbox" id="showStaffPassword" onchange="toggleStaffPasswordVisibility()"><span>Show password</span></label>
         <button class="custom-btn login-submit-button" id="staffLoginSubmitButton" type="button" onclick="submitStaffLogin()"><span class="login-button-label">Log in</span><span class="login-spinner" aria-hidden="true"></span></button>
@@ -279,41 +283,66 @@
     </div>
   </div>
 
-  <div id="checkoutModal" class="modal-overlay checkout-overlay" role="dialog" aria-modal="true" aria-labelledby="checkoutTitle">
+  <div id="invoiceModal" class="modal-overlay checkout-overlay" role="dialog" aria-modal="true" aria-labelledby="invoiceTitle">
     <div class="checkout-modal-card">
       <div class="modal-header">
         <div>
           <div class="eyebrow">Checkout</div>
-          <h3 id="checkoutTitle">Confirm your order</h3>
+          <h3 id="invoiceTitle">Prepare your invoice</h3>
         </div>
-        <button class="modal-close-button" aria-label="Close checkout dialog" onclick="closeCheckoutModal()">&times;</button>
+        <button class="modal-close-button" aria-label="Close invoice dialog" onclick="closeInvoiceModal()">&times;</button>
       </div>
-      <div class="checkout-reference-row"><span>Quote / Invoice reference</span><strong id="checkoutReference"></strong></div>
-      <div id="checkoutSummary" class="checkout-summary"></div>
-      <div class="checkout-total-row"><span>Total payable</span><strong id="checkoutTotal"></strong></div>
+      <div class="checkout-reference-row"><span>Quotation reference</span><strong id="invoiceQuoteReference"></strong></div>
+      <div class="quote-fields" style="margin-top:14px;">
+        <label><span class="field-label">Client name</span><input id="invoiceClientName" type="text" list="customerNamesList" placeholder="e.g. Peter Nyongesa" autocomplete="off" onchange="applyCustomerAutofill('invoiceClientName', 'invoiceClientPhone', this.value)"></label>
+        <label><span class="field-label">Phone number</span><input id="invoiceClientPhone" type="tel" placeholder="e.g. 0712 345 678"></label>
+      </div>
+      <div id="invoiceSummary" class="checkout-summary"></div>
+      <div class="invoice-charges">
+        <label><span class="field-label">Delivery / shipping cost (Kshs)</span><input id="invoiceDeliveryCost" type="number" min="0" placeholder="0" oninput="updateInvoicePreviewTotal()"></label>
+        <label><span class="field-label">Other charge label</span><input id="invoiceOtherChargeLabel" type="text" placeholder="e.g. Design fee"></label>
+        <label><span class="field-label">Other charge amount (Kshs)</span><input id="invoiceOtherChargeAmount" type="number" min="0" placeholder="0" oninput="updateInvoicePreviewTotal()"></label>
+      </div>
+      <div class="checkout-total-row"><span>Total payable</span><strong id="invoiceTotalPreview">Kshs. 0.00</strong></div>
+      <p id="invoiceModalStatus" class="checkout-status" role="status" aria-live="polite"></p>
+      <div class="checkout-modal-actions">
+        <button class="continue-btn" type="button" onclick="closeInvoiceModal()">Cancel</button>
+        <button class="custom-btn" type="button" onclick="generateInvoiceFromModal()">Generate invoice</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="paymentModal" class="modal-overlay checkout-overlay" role="dialog" aria-modal="true" aria-labelledby="paymentTitle">
+    <div class="checkout-modal-card">
+      <div class="modal-header">
+        <div>
+          <div class="eyebrow">Payment</div>
+          <h3 id="paymentTitle">Pay this invoice</h3>
+        </div>
+        <button class="modal-close-button" aria-label="Close payment dialog" onclick="closePaymentModal()">&times;</button>
+      </div>
+      <div class="checkout-reference-row"><span>Invoice reference</span><strong id="paymentInvoiceReference"></strong></div>
+      <div class="checkout-total-row"><span>Amount due</span><strong id="paymentAmountDue">Kshs. 0.00</strong></div>
 
       <fieldset class="payment-methods">
         <legend>Payment method</legend>
-        <label class="payment-option"><input type="radio" name="paymentMethod" value="mpesa" checked onchange="togglePaymentFields()"><span><strong>M-Pesa Express</strong><small>STK Push / Till payment</small></span></label>
-        <label class="payment-option"><input type="radio" name="paymentMethod" value="paybill" onchange="togglePaymentFields()"><span><strong>Equity Paybill</strong><small>Paybill 247247</small></span></label>
+        <label class="payment-option"><input type="radio" name="invoicePaymentMethod" value="mpesa" checked onchange="toggleInvoicePaymentFields()"><span><strong>M-Pesa Buy Goods</strong><small>Till No. 5675635</small></span></label>
+        <label class="payment-option"><input type="radio" name="invoicePaymentMethod" value="cash" onchange="toggleInvoicePaymentFields()"><span><strong>Cash</strong><small>Paid directly to staff</small></span></label>
       </fieldset>
 
-      <div id="mpesaFields" class="payment-fields">
-        <label><span class="field-label">M-Pesa phone number</span><input id="checkoutMpesaPhone" type="tel" inputmode="tel" autocomplete="tel" placeholder="e.g. 0712 345 678"></label>
-        <p class="payment-hint">Your payment request will be submitted for verification. Confirm the prompt on your phone if an STK Push is available.</p>
+      <div id="invoiceMpesaFields" class="payment-fields">
+        <div class="paybill-details"><span>Till number</span><strong>5675635</strong></div>
+        <label><span class="field-label">M-Pesa phone number used</span><input id="paymentMpesaPhone" type="tel" inputmode="tel" autocomplete="tel" placeholder="e.g. 0712 345 678"></label>
+        <p class="payment-hint">Pay to Till No. 5675635, then submit this form for verification.</p>
       </div>
-      <div id="paybillFields" class="payment-fields" hidden>
-        <div class="paybill-details"><span>Business number</span><strong>247247</strong></div>
-        <label><span class="field-label">Equity transaction code</span><input id="checkoutPaybillCode" type="text" autocomplete="off" autocapitalize="characters" spellcheck="false" placeholder="Paste transaction code"></label>
+      <div id="invoicePaybillFields" class="payment-fields" hidden>
+        <label><span class="field-label">Cash reference / receipt note</span><input id="paymentPaybillCode" type="text" autocomplete="off" spellcheck="false" placeholder="e.g. Cash received by staff name"></label>
       </div>
 
-      <p id="checkoutStatus" class="checkout-status" role="status" aria-live="polite"></p>
+      <p id="paymentModalStatus" class="checkout-status" role="status" aria-live="polite"></p>
       <div class="checkout-modal-actions">
-        <button class="whatsapp-btn" type="button" onclick="sendCheckoutToWhatsApp()">Send order to WhatsApp</button>
-        <button class="custom-btn" type="button" onclick="submitCheckoutPayment()">Pay &amp; Confirm Order</button>
-      </div>
-      <div id="checkoutDocumentActions" class="checkout-document-actions" hidden>
-        <button class="refresh-btn" type="button" onclick="openDocumentPreview()">Preview document</button>
+        <button class="continue-btn" type="button" onclick="closePaymentModal()">Back to invoice</button>
+        <button class="custom-btn" type="button" onclick="submitInvoicePaymentFromModal()">Pay &amp; Confirm</button>
       </div>
     </div>
   </div>
@@ -328,6 +357,7 @@
         <button class="refresh-btn" type="button" onclick="generatePDF(currentDocument.type, currentDocument.reference)">Download PDF</button>
         <button class="refresh-btn" type="button" onclick="generateJPEG(currentDocument.type, currentDocument.reference)">Download JPEG</button>
         <button class="whatsapp-btn" type="button" onclick="shareDocumentViaWhatsApp()">Share via WhatsApp</button>
+        <button class="custom-btn" type="button" id="proceedToPaymentButton" onclick="openPaymentModal()" hidden>Proceed to payment</button>
         <button class="custom-btn" type="button" id="confirmDocumentPaymentButton" onclick="confirmCurrentInvoicePayment()" hidden>Confirm payment</button>
       </div>
       <article id="documentRenderSurface" class="document-render-surface"></article>

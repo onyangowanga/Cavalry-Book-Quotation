@@ -1,5 +1,27 @@
 const API_URL = "https://script.google.com/macros/s/AKfycbx9xaPSdNyEa51Lws0iEBobfHrh4ZqAw4R5QO5YJi680D1B-S1HlRdrTxMi5QdXTccXEA/exec";
 const COMPANY_WHATSAPP = "254726953346"; // Replace with your primary business WhatsApp phone number
+const TILL_NUMBER = "5675635"; // Buy Goods till number clients pay to
+
+// Central fetch wrapper: surfaces a clear message instead of a raw JSON-parse crash when the
+// Apps Script URL 404s, redirects to a sign-in page, or otherwise responds with non-JSON HTML.
+async function postApi(payload) {
+  let response;
+  try {
+    response = await fetch(API_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+      body: JSON.stringify(payload)
+    });
+  } catch (networkError) {
+    throw new Error('Could not reach the server. Please check your internet connection.');
+  }
+  const text = await response.text();
+  try {
+    return JSON.parse(text);
+  } catch (parseError) {
+    throw new Error(`The server is unreachable right now (HTTP ${response.status}). The Apps Script deployment link may be outdated - please contact the admin.`);
+  }
+}
 
 // drive.google.com/thumbnail links are blocked by CORS; googleusercontent.com serves the same image without that restriction.
 function formatDriveUrl(url) {
@@ -32,10 +54,12 @@ let isStaff = false;
 let staffPassword = '';
 let offsetHistory = [];
 let activeAppTab = 'catalogue';
-let checkoutReference = '';
+let currentQuotationReference = '';
+let quotationSignature = '';
 let currentDocument = null;
 let allDocuments = [];
 let documentsFilter = 'all';
+let customersDirectory = [];
 
 const OFFSET_PAPER_COSTS = {
   'Bond 70': 1100,
@@ -86,6 +110,7 @@ function loadCatalog() {
             rawCatalog = sortCatalogue(response.data);
             catalog = rawCatalog;
             displayBooks(catalog); 
+            populateBookSuggestions(catalog);
         } else {
             showCatalogError('The catalogue could not be loaded: ' + (response.message || 'Unknown error'));
         }
@@ -112,12 +137,14 @@ function setRefreshButtonLoading(isLoading) {
 function openStaffLoginModal() {
   const modal = document.getElementById('staffLoginModal');
   modal.style.display = 'flex';
+  const usernameInput = document.getElementById('staffUsernameInput');
   const input = document.getElementById('staffPasswordInput');
   const checkbox = document.getElementById('showStaffPassword');
+  usernameInput.value = '';
   input.value = '';
   input.type = 'password';
   checkbox.checked = false;
-  input.focus();
+  usernameInput.focus();
 }
 
 function closeStaffLoginModal() { document.getElementById('staffLoginModal').style.display = 'none'; }
@@ -129,33 +156,31 @@ function toggleStaffPasswordVisibility() {
 }
 
 async function submitStaffLogin() {
+  const usernameInput = document.getElementById('staffUsernameInput');
   const input = document.getElementById('staffPasswordInput');
   const button = document.getElementById('staffLoginSubmitButton');
   const label = button.querySelector('.login-button-label');
+  const username = usernameInput.value.trim();
   const password = input.value;
-  if (!password) {
-    alert('Please enter the staff password.');
-    input.focus();
+  if (!username || !password) {
+    alert('Please enter your username and password.');
+    (username ? input : usernameInput).focus();
     return;
   }
   button.disabled = true;
   button.classList.add('is-loading');
   label.textContent = 'Signing in...';
   try {
-    const response = await fetch(API_URL, {
-      method: 'POST',
-      headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-      body: JSON.stringify({ action: 'login', password })
-    });
-    const result = await response.json();
-    if (result.status !== 'success') throw new Error(result.message || 'Incorrect password.');
+    const result = await postApi({ action: 'login', username, password });
+    if (result.status !== 'success') throw new Error(result.message || 'Incorrect username or password.');
     staffPassword = password;
     isStaff = true;
     closeStaffLoginModal();
     updateStaffUI();
+    loadCustomersDirectory();
   } catch (error) {
     console.error('Staff login failed:', error);
-    alert('Incorrect password or login service unavailable.');
+    alert('Incorrect username/password or login service unavailable.');
     input.value = '';
     input.focus();
   } finally {
@@ -168,7 +193,29 @@ async function submitStaffLogin() {
 function logoutStaff() {
   isStaff = false;
   staffPassword = '';
+  customersDirectory = [];
   updateStaffUI();
+}
+
+// Lets staff autofill a returning client's phone number the moment they pick a saved name.
+async function loadCustomersDirectory() {
+  if (!isStaff) return;
+  try {
+    const result = await postApi({ action: 'list_customers', staffPassword });
+    if (result.status !== 'success') throw new Error(result.message || 'Customers could not be loaded.');
+    customersDirectory = result.data || [];
+    const datalist = document.getElementById('customerNamesList');
+    if (datalist) datalist.innerHTML = customersDirectory.map(c => `<option value="${escapeHtml(c.name)}"></option>`).join('');
+  } catch (error) {
+    console.error('Loading customers failed:', error);
+  }
+}
+
+function applyCustomerAutofill(nameFieldId, phoneFieldId, selectedName) {
+  const match = customersDirectory.find(c => c.name.toLowerCase() === String(selectedName || '').trim().toLowerCase());
+  if (!match) return;
+  const phoneField = document.getElementById(phoneFieldId);
+  if (phoneField && !phoneField.value.trim()) phoneField.value = match.phone;
 }
 
 function updateStaffUI() {
@@ -488,12 +535,7 @@ async function editSpecialPrice(bookId) {
     return;
   }
   try {
-    const response = await fetch(API_URL, {
-      method: 'POST',
-      headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-      body: JSON.stringify({ action: 'set_special_price', bookId, specialPrice, staffPassword })
-    });
-    const result = await response.json();
+    const result = await postApi({ action: 'set_special_price', bookId, specialPrice, staffPassword });
     if (result.status !== 'success') throw new Error(result.message || 'The special price could not be saved.');
     await loadCatalog();
   } catch (error) {
@@ -723,6 +765,14 @@ function filterCatalog() {
   displayBooks(catalog.filter(b => `${b.title} ${b.author}`.toLowerCase().includes(query)));
 }
 
+// Feeds the catalogue search box's native <datalist> so users get book-title suggestions instead of browser autofill.
+function populateBookSuggestions(books) {
+  const datalist = document.getElementById('bookTitlesList');
+  if (!datalist) return;
+  const uniqueTitles = [...new Set(books.map(book => book.title).filter(Boolean))];
+  datalist.innerHTML = uniqueTitles.map(title => `<option value="${escapeHtml(title)}"></option>`).join('');
+}
+
 function addToCart(bookId) {
   const item = cart.find(i => i.id === bookId);
   if (item) { 
@@ -759,17 +809,12 @@ async function updateSize(bookId, newSizeCode) {
   renderCart();
 
   try {
-    const response = await fetch(API_URL, {
-      method: 'POST',
-      headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-      body: JSON.stringify({
-        action: 'calculate_cost',
-        pages: item.pages,
-        colorPages: item.colorPages,
-        sizeCode: String(newSizeCode)
-      })
+    const result = await postApi({
+      action: 'calculate_cost',
+      pages: item.pages,
+      colorPages: item.colorPages,
+      sizeCode: String(newSizeCode)
     });
-    const result = await response.json();
     const backendUnitCost = Number(result.unitCost ?? result.cost ?? result.data?.unitCost);
     if (result.status !== 'success' || !Number.isFinite(backendUnitCost)) {
       throw new Error(result.message || 'The backend did not return a valid price.');
@@ -806,13 +851,6 @@ function closeCart() {
   document.getElementById('drawerBackdrop').classList.remove('is-visible');
   document.getElementById('cartFab').setAttribute('aria-expanded', 'false');
 }
-
-function focusCheckout() {
-  openCart();
-  document.querySelector('.quote-panel').scrollTo({ top: 0, behavior: 'smooth' });
-  document.getElementById('clientName').focus();
-}
-
 function getCurrentOrderSnapshot() {
   const discount = getDiscountValue();
   const subtotal = cart.reduce((sum, item) => sum + (getUnitPrice(item) * item.quantity), 0);
@@ -833,113 +871,232 @@ function getCurrentOrderSnapshot() {
   };
 }
 
-function createCheckoutReference() {
-  return `INV-${Date.now().toString(36).toUpperCase().slice(-6)}`;
-}
-
-function renderCheckoutSummary(order) {
-  document.getElementById('checkoutReference').textContent = checkoutReference;
-  document.getElementById('checkoutSummary').innerHTML = order.items.map(item => `
+function renderDocumentItemsSummary(containerId, items) {
+  document.getElementById(containerId).innerHTML = items.map(item => `
     <div class="checkout-summary-item">
-      <div><strong>${escapeHtml(item.title)}</strong><small>${item.quantity} × Kshs. ${item.unitPrice.toLocaleString('en-US', { minimumFractionDigits: 2 })} · ${item.mode === 'mass' ? 'Mass' : 'Sample'} · ${escapeHtml(item.size)} · ${item.pages} pages</small></div>
-      <strong>Kshs. ${item.total.toLocaleString('en-US', { minimumFractionDigits: 2 })}</strong>
+      <div><strong>${escapeHtml(item.title)}</strong>${(item.mode || item.size) ? `<small>${item.quantity} × Kshs. ${Number(item.unitPrice).toLocaleString('en-US', { minimumFractionDigits: 2 })} · ${item.mode === 'mass' ? 'Mass' : item.mode === 'sample' ? 'Sample' : ''} ${escapeHtml(item.size || '')}</small>` : `<small>${item.quantity} × Kshs. ${Number(item.unitPrice).toLocaleString('en-US', { minimumFractionDigits: 2 })}</small>`}</div>
+      <strong>Kshs. ${Number(item.total).toLocaleString('en-US', { minimumFractionDigits: 2 })}</strong>
     </div>
   `).join('');
-  document.getElementById('checkoutTotal').textContent = `Kshs. ${order.total.toLocaleString('en-US', { minimumFractionDigits: 2 })}`;
 }
 
-function openCheckoutModal() {
+// Creates (or reuses, if the cart contents haven't changed) the Quotation document behind every share/checkout action.
+// Serialized via quotationRequestPromise so overlapping triggers (e.g. a cart share button clicked
+// while the invoice modal is open) can never race and leave currentQuotationReference pointing at a
+// different quotation than the one actually shown to the user.
+let quotationRequestPromise = null;
+
+function ensureQuotationDocument() {
+  if (quotationRequestPromise) return quotationRequestPromise;
+  quotationRequestPromise = ensureQuotationDocumentInternal().finally(() => { quotationRequestPromise = null; });
+  return quotationRequestPromise;
+}
+
+async function ensureQuotationDocumentInternal() {
   if (!cart.length) {
     alert('Add at least one book to your quote first.');
-    return;
+    return null;
   }
-  checkoutReference = createCheckoutReference();
-  renderCheckoutSummary(getCurrentOrderSnapshot());
-  document.getElementById('checkoutStatus').textContent = '';
-  document.getElementById('checkoutStatus').className = 'checkout-status';
-  document.getElementById('checkoutModal').style.display = 'flex';
+  const order = getCurrentOrderSnapshot();
+  // Client name/phone are excluded on purpose: editing them after a quotation was created (or was
+  // shared) must not spawn a second, disconnected quotation reference for the exact same cart.
+  const signature = JSON.stringify({ items: order.items, subtotal: order.subtotal, discount: order.discount, total: order.total });
+  if (currentQuotationReference && signature === quotationSignature && currentDocument && currentDocument.type === 'quotation' && currentDocument.reference === currentQuotationReference) {
+    currentDocument.clientName = order.clientName;
+    currentDocument.clientPhone = order.clientPhone;
+    return currentDocument;
+  }
+  try {
+    const result = await postApi({
+      action: 'log_quote',
+      clientName: order.clientName,
+      clientPhone: order.clientPhone,
+      items: order.items,
+      itemsSummary: order.items.map(item => `${item.quantity}x ${item.title} (${item.mode})`).join('; '),
+      subtotal: order.subtotal,
+      discount: order.discount,
+      total: order.total
+    });
+    if (result.status !== 'success') throw new Error(result.message || 'The quotation could not be saved.');
+    currentQuotationReference = result.reference;
+    quotationSignature = signature;
+    currentDocument = { ...order, type: 'quotation', reference: result.reference, status: 'ACTIVE' };
+    syncInvoiceModalReference();
+    return currentDocument;
+  } catch (error) {
+    console.error('Quotation creation failed:', error);
+    alert('The quotation could not be saved. Please check your connection and try again.');
+    return null;
+  }
 }
 
-function closeCheckoutModal() { document.getElementById('checkoutModal').style.display = 'none'; }
-
-function togglePaymentFields() {
-  const method = document.querySelector('input[name="paymentMethod"]:checked').value;
-  document.getElementById('mpesaFields').hidden = method !== 'mpesa';
-  document.getElementById('paybillFields').hidden = method !== 'paybill';
+// Keeps the invoice modal's visible reference honest if a quotation gets (re)created while it's open.
+function syncInvoiceModalReference() {
+  const field = document.getElementById('invoiceQuoteReference');
+  const modal = document.getElementById('invoiceModal');
+  if (field && modal && modal.style.display === 'flex') field.textContent = currentQuotationReference;
 }
 
-function setCheckoutStatus(message, type) {
-  const status = document.getElementById('checkoutStatus');
+async function shareCartQuotationWhatsApp() {
+  const doc = await ensureQuotationDocument();
+  if (!doc) return;
+  openDocumentPreview();
+  await shareDocumentViaWhatsApp();
+}
+
+async function downloadCartQuotationPdf() {
+  const doc = await ensureQuotationDocument();
+  if (!doc) return;
+  openDocumentPreview();
+  await generatePDF(doc.type, doc.reference);
+}
+
+async function downloadCartQuotationJpeg() {
+  const doc = await ensureQuotationDocument();
+  if (!doc) return;
+  openDocumentPreview();
+  await generateJPEG(doc.type, doc.reference);
+}
+
+function calculateInvoicePreviewTotal() {
+  const delivery = Math.max(0, Number(document.getElementById('invoiceDeliveryCost').value) || 0);
+  const otherAmount = Math.max(0, Number(document.getElementById('invoiceOtherChargeAmount').value) || 0);
+  const baseTotal = currentDocument ? Number(currentDocument.total || 0) : 0;
+  return baseTotal + delivery + otherAmount;
+}
+
+function updateInvoicePreviewTotal() {
+  document.getElementById('invoiceTotalPreview').textContent = formatKshs(calculateInvoicePreviewTotal());
+}
+
+async function openInvoiceModal() {
+  closeCart();
+  const doc = await ensureQuotationDocument();
+  if (!doc) return;
+  // The quotation is now the source of truth for this order; empty the cart so nothing can
+  // spawn a second, disconnected quotation before the invoice is generated.
+  cart = [];
+  renderCart();
+  document.getElementById('invoiceQuoteReference').textContent = doc.reference;
+  document.getElementById('invoiceClientName').value = doc.clientName;
+  document.getElementById('invoiceClientPhone').value = doc.clientPhone;
+  renderDocumentItemsSummary('invoiceSummary', doc.items);
+  document.getElementById('invoiceDeliveryCost').value = '';
+  document.getElementById('invoiceOtherChargeLabel').value = '';
+  document.getElementById('invoiceOtherChargeAmount').value = '';
+  updateInvoicePreviewTotal();
+  document.getElementById('invoiceModalStatus').textContent = '';
+  document.getElementById('invoiceModalStatus').className = 'checkout-status';
+  document.getElementById('invoiceModal').style.display = 'flex';
+}
+
+function closeInvoiceModal() { document.getElementById('invoiceModal').style.display = 'none'; }
+
+function setInvoiceModalStatus(message, type) {
+  const status = document.getElementById('invoiceModalStatus');
   status.textContent = message;
   status.className = `checkout-status${type ? ` is-${type}` : ''}`;
 }
 
-async function submitCheckoutPayment() {
-  if (!cart.length) return;
-  const method = document.querySelector('input[name="paymentMethod"]:checked').value;
-  const phone = document.getElementById('checkoutMpesaPhone').value.trim();
-  const transactionCode = document.getElementById('checkoutPaybillCode').value.trim().toUpperCase();
-  if (method === 'mpesa' && phone.replace(/\D/g, '').length < 10) {
-    setCheckoutStatus('Enter a valid M-Pesa phone number.', 'error');
-    return;
-  }
-  if (method === 'paybill' && !transactionCode) {
-    setCheckoutStatus('Enter the Equity transaction code after payment.', 'error');
-    return;
-  }
-  const order = getCurrentOrderSnapshot();
-  setCheckoutStatus('Submitting your order for payment verification...', '');
+// Quotation -> Invoice. The quotation is marked converted server-side to block duplicate invoices.
+async function generateInvoiceFromModal() {
+  if (!currentQuotationReference) return;
+  const clientName = document.getElementById('invoiceClientName').value.trim() || 'Valued Client';
+  const clientPhone = document.getElementById('invoiceClientPhone').value.trim();
+  const deliveryCost = Math.max(0, Number(document.getElementById('invoiceDeliveryCost').value) || 0);
+  const otherLabel = document.getElementById('invoiceOtherChargeLabel').value.trim();
+  const otherAmount = Math.max(0, Number(document.getElementById('invoiceOtherChargeAmount').value) || 0);
+  const extraCharges = [];
+  if (deliveryCost > 0) extraCharges.push({ label: 'Delivery / shipping cost', amount: deliveryCost });
+  if (otherAmount > 0) extraCharges.push({ label: otherLabel || 'Additional charge', amount: otherAmount });
+
+  setInvoiceModalStatus('Generating your invoice...', '');
   try {
-    const orderResponse = await fetch(API_URL, {
-      method: 'POST',
-      headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-      body: JSON.stringify({
-        action: 'submit_order',
-        quotationNumber: checkoutReference,
-        paymentMethod: method,
-        paymentPhone: method === 'mpesa' ? phone : '',
-        transactionCode: method === 'paybill' ? transactionCode : '',
-        clientName: order.clientName,
-        clientPhone: order.clientPhone,
-        items: order.items,
-        itemsSummary: order.items.map(item => `${item.quantity}x ${item.title} (${item.mode})`).join('; '),
-        subtotal: order.subtotal,
-        discount: order.discount,
-        total: order.total
-      })
-    });
-    const orderResult = await orderResponse.json();
-    if (orderResult.status !== 'success') throw new Error(orderResult.message || 'Order submission failed.');
-    const invoiceResponse = await fetch(API_URL, {
-      method: 'POST',
-      headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-      body: JSON.stringify({ action: 'convert_order_to_invoice', orderReference: orderResult.reference })
-    });
-    const invoiceResult = await invoiceResponse.json();
-    if (invoiceResult.status !== 'success') throw new Error(invoiceResult.message || 'Invoice creation failed.');
-    currentDocument = invoiceResult.data || { ...order, type: 'invoice', reference: invoiceResult.reference, status: 'PENDING' };
+    const result = await requestInvoiceConversion(currentQuotationReference, clientName, clientPhone, extraCharges);
+    if (result.status !== 'success') throw new Error(result.message || 'The invoice could not be generated.');
+    currentDocument = result.data;
     currentDocument.type = 'invoice';
-    currentDocument.reference = invoiceResult.reference;
-    if (method === 'paybill') {
-      const receiptResponse = await fetch(API_URL, {
-        method: 'POST',
-        headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-        body: JSON.stringify({ action: 'confirm_invoice_payment', invoiceReference: invoiceResult.reference, paymentMethod: method, paymentReference: transactionCode })
-      });
-      const receiptResult = await receiptResponse.json();
-      if (receiptResult.status === 'success') {
-        currentDocument = receiptResult.data || currentDocument;
-        currentDocument.type = 'receipt';
-        currentDocument.reference = receiptResult.reference;
-      }
-    }
-    document.getElementById('checkoutDocumentActions').hidden = false;
-    setCheckoutStatus(method === 'mpesa' ? `Invoice ${invoiceResult.reference} created and awaiting payment verification.` : `Receipt ${currentDocument.reference} created and payment recorded.`, 'success');
+    currentDocument.reference = result.reference;
+    // The quotation this invoice came from is now converted; force a fresh one for any future order.
+    currentQuotationReference = '';
+    quotationSignature = '';
+    cart = [];
+    renderCart();
+    closeInvoiceModal();
     openDocumentPreview();
   } catch (error) {
-    console.error('Checkout submission failed:', error);
-    setCheckoutStatus('The order could not be submitted. Please try again or send it to WhatsApp.', 'error');
+    console.error('Invoice generation failed:', error);
+    setInvoiceModalStatus(error.message || 'The invoice could not be generated. Please try again.', 'error');
   }
+}
+
+async function requestInvoiceConversion(quotationReference, clientName, clientPhone, extraCharges) {
+  return postApi({ action: 'convert_quote_to_invoice', quotationReference, clientName, clientPhone, extraCharges });
+}
+
+function openPaymentModal() {
+  if (!currentDocument || currentDocument.type !== 'invoice' || currentDocument.status === 'PAID') return;
+  closeDocumentPreview();
+  document.getElementById('paymentInvoiceReference').textContent = currentDocument.reference;
+  document.getElementById('paymentAmountDue').textContent = formatKshs(currentDocument.total);
+  document.getElementById('paymentMpesaPhone').value = document.getElementById('clientPhone').value.trim();
+  document.getElementById('paymentPaybillCode').value = '';
+  document.querySelector('input[name="invoicePaymentMethod"][value="mpesa"]').checked = true;
+  toggleInvoicePaymentFields();
+  setPaymentModalStatus('', '');
+  document.getElementById('paymentModal').style.display = 'flex';
+}
+
+function closePaymentModal() {
+  document.getElementById('paymentModal').style.display = 'none';
+  if (currentDocument) openDocumentPreview();
+}
+
+function toggleInvoicePaymentFields() {
+  const method = document.querySelector('input[name="invoicePaymentMethod"]:checked').value;
+  document.getElementById('invoiceMpesaFields').hidden = method !== 'mpesa';
+  document.getElementById('invoicePaybillFields').hidden = method !== 'cash';
+}
+
+function setPaymentModalStatus(message, type) {
+  const status = document.getElementById('paymentModalStatus');
+  status.textContent = message;
+  status.className = `checkout-status${type ? ` is-${type}` : ''}`;
+}
+
+// Invoice -> Receipt. A production Order is opened automatically by the backend on success.
+async function submitInvoicePaymentFromModal() {
+  if (!currentDocument || currentDocument.type !== 'invoice') return;
+  const method = document.querySelector('input[name="invoicePaymentMethod"]:checked').value;
+  const phone = document.getElementById('paymentMpesaPhone').value.trim();
+  const transactionCode = document.getElementById('paymentPaybillCode').value.trim();
+  if (method === 'mpesa' && phone.replace(/\D/g, '').length < 10) {
+    setPaymentModalStatus('Enter the M-Pesa phone number used to pay the till.', 'error');
+    return;
+  }
+  setPaymentModalStatus('Submitting your payment for verification...', '');
+  try {
+    const result = await postApi({
+      action: 'confirm_invoice_payment',
+      invoiceReference: currentDocument.reference,
+      paymentMethod: method,
+      paymentReference: method === 'mpesa' ? phone : transactionCode
+    });
+    if (result.status !== 'success') throw new Error(result.message || 'Payment confirmation failed.');
+    currentDocument = result.data;
+    currentDocument.type = 'receipt';
+    currentDocument.reference = result.reference;
+    closePaymentModal();
+  } catch (error) {
+    console.error('Invoice payment failed:', error);
+    setPaymentModalStatus(error.message || 'The payment could not be confirmed. Please try again.', 'error');
+  }
+}
+
+function focusCheckout() {
+  openCart();
+  document.querySelector('.quote-panel').scrollTo({ top: 0, behavior: 'smooth' });
+  document.getElementById('clientName').focus();
 }
 
 const COMPANY_LOGO_URL = 'https://lh3.googleusercontent.com/d/1F2xjo6EPzhSGZMFRrP8IAaMWXe_o7xKG=s1000';
@@ -947,6 +1104,13 @@ const COMPANY_LOGO_URL = 'https://lh3.googleusercontent.com/d/1F2xjo6EPzhSGZMFRr
 function renderDocumentHtml(documentData) {
   const status = String(documentData.status || 'PENDING').toUpperCase();
   const items = documentData.items || [];
+  const type = String(documentData.type || 'invoice').toLowerCase();
+  let noteHtml = '';
+  if (type === 'invoice' && status !== 'PAID') {
+    noteHtml = `<div class="document-payment-note">Please make payment of <strong>Kshs. ${Number(documentData.total || 0).toLocaleString('en-US', { minimumFractionDigits: 2 })}</strong> to <strong>Till No. ${TILL_NUMBER}</strong> to confirm this order.<br>Production begins after receipt of payment. Delivery within 2 working days.</div>`;
+  } else if (type === 'receipt') {
+    noteHtml = `<div class="document-payment-note is-success">Payment received. Your order has been placed and production begins.<br>Delivery within 2 working days.</div>`;
+  }
   return `<img class="document-watermark-logo" src="${COMPANY_LOGO_URL}" alt="" crossorigin="anonymous" aria-hidden="true" onerror="this.style.display='none';">
     <header class="document-render-header">
       <div class="document-render-brand">
@@ -958,6 +1122,7 @@ function renderDocumentHtml(documentData) {
     <div class="document-render-meta"><div>Prepared for<strong>${escapeHtml(documentData.clientName || 'Valued Client')}</strong><span>${escapeHtml(documentData.clientPhone || 'Phone not provided')}</span></div><div>Payment status<strong>${escapeHtml(status)}</strong><span>${escapeHtml(documentData.paymentMethod || 'Payment pending')}</span></div></div>
     <table class="document-render-table"><thead><tr><th>Description</th><th>Qty</th><th>Unit price</th><th>Amount</th></tr></thead><tbody>${items.map(item => `<tr><td>${escapeHtml(item.title || item.name || '')}<br><small>${escapeHtml(item.mode || '')} ${escapeHtml(item.size || '')}</small></td><td>${item.quantity || 0}</td><td>Kshs. ${Number(item.unitPrice || 0).toLocaleString('en-US', { minimumFractionDigits: 2 })}</td><td>Kshs. ${Number(item.total || 0).toLocaleString('en-US', { minimumFractionDigits: 2 })}</td></tr>`).join('')}</tbody></table>
     <div class="document-render-total"><span>Total Kshs.</span><strong>${Number(documentData.total || 0).toLocaleString('en-US', { minimumFractionDigits: 2 })}</strong></div>
+    ${noteHtml}
     <div class="document-status-stamp ${status === 'PAID' ? '' : 'pending'}">${escapeHtml(status)}</div>`;
 }
 
@@ -965,8 +1130,9 @@ function openDocumentPreview() {
   if (!currentDocument) return;
   document.getElementById('documentPreviewTitle').textContent = `${currentDocument.type || 'Document'} ${currentDocument.reference || ''}`;
   document.getElementById('documentRenderSurface').innerHTML = renderDocumentHtml(currentDocument);
-  const confirmButton = document.getElementById('confirmDocumentPaymentButton');
-  confirmButton.hidden = !(isStaff && currentDocument.type === 'invoice' && currentDocument.status !== 'PAID');
+  const isPendingInvoice = currentDocument.type === 'invoice' && currentDocument.status !== 'PAID';
+  document.getElementById('proceedToPaymentButton').hidden = !isPendingInvoice;
+  document.getElementById('confirmDocumentPaymentButton').hidden = !(isStaff && isPendingInvoice);
   document.getElementById('documentPreviewModal').style.display = 'flex';
 }
 
@@ -978,12 +1144,7 @@ async function confirmCurrentInvoicePayment() {
   if (!paymentMethod) return;
   const paymentReference = prompt('Payment reference or transaction code (optional):', '') || '';
   try {
-    const response = await fetch(API_URL, {
-      method: 'POST',
-      headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-      body: JSON.stringify({ action: 'confirm_invoice_payment', invoiceReference: currentDocument.reference, paymentMethod, paymentReference })
-    });
-    const result = await response.json();
+    const result = await postApi({ action: 'confirm_invoice_payment', invoiceReference: currentDocument.reference, paymentMethod, paymentReference });
     if (result.status !== 'success') throw new Error(result.message || 'Payment confirmation failed.');
     currentDocument = result.data;
     currentDocument.type = 'receipt';
@@ -1001,12 +1162,7 @@ async function loadDocumentsTracker() {
   const tableBody = document.getElementById('documentsTableBody');
   tableBody.innerHTML = '<tr><td colspan="7" class="documents-empty">Loading documents...</td></tr>';
   try {
-    const response = await fetch(API_URL, {
-      method: 'POST',
-      headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-      body: JSON.stringify({ action: 'list_documents', staffPassword })
-    });
-    const result = await response.json();
+    const result = await postApi({ action: 'list_documents', staffPassword });
     if (result.status !== 'success') throw new Error(result.message || 'Documents could not be loaded.');
     allDocuments = result.data || [];
     renderAccountingSummary();
@@ -1021,21 +1177,25 @@ function formatKshs(value) {
   return `Kshs. ${Number(value || 0).toLocaleString('en-US', { minimumFractionDigits: 2 })}`;
 }
 
-// Basic accounting: quoted/ordered volume, outstanding invoices, and collected receipts.
+// Basic accounting: quoted volume, outstanding invoices, collected receipts, and production/delivery status.
 function renderAccountingSummary() {
-  const quotesTotal = allDocuments.filter(doc => doc.type === 'quotation').reduce((sum, doc) => sum + doc.total, 0);
-  const ordersTotal = allDocuments.filter(doc => doc.type === 'order').reduce((sum, doc) => sum + doc.total, 0);
+  const quotations = allDocuments.filter(doc => doc.type === 'quotation');
+  const quotesTotal = quotations.reduce((sum, doc) => sum + doc.total, 0);
   const invoices = allDocuments.filter(doc => doc.type === 'invoice');
   const outstandingInvoices = invoices.filter(doc => doc.status !== 'PAID');
   const outstandingTotal = outstandingInvoices.reduce((sum, doc) => sum + doc.total, 0);
   const receipts = allDocuments.filter(doc => doc.type === 'receipt');
   const collectedTotal = receipts.reduce((sum, doc) => sum + doc.total, 0);
+  const orders = allDocuments.filter(doc => doc.type === 'order');
+  const inProduction = orders.filter(doc => doc.status !== 'COMPLETED');
+  const deliveries = allDocuments.filter(doc => doc.type === 'delivery');
 
   const cards = [
-    { label: 'Quotes issued', value: `${allDocuments.filter(d => d.type === 'quotation').length} · ${formatKshs(quotesTotal)}` },
-    { label: 'Active orders', value: `${allDocuments.filter(d => d.type === 'order').length} · ${formatKshs(ordersTotal)}` },
+    { label: 'Quotes issued', value: `${quotations.length} · ${formatKshs(quotesTotal)}` },
     { label: 'Outstanding invoices', value: `${outstandingInvoices.length} · ${formatKshs(outstandingTotal)}`, highlight: true },
-    { label: 'Revenue collected', value: `${receipts.length} · ${formatKshs(collectedTotal)}` }
+    { label: 'Revenue collected', value: `${receipts.length} · ${formatKshs(collectedTotal)}` },
+    { label: 'In production', value: `${inProduction.length} of ${orders.length} orders` },
+    { label: 'Delivered', value: `${deliveries.length}` }
   ];
   document.getElementById('accountingSummary').innerHTML = cards.map(card => `<div${card.highlight ? ' class="accounting-highlight"' : ''}><span>${escapeHtml(card.label)}</span><strong>${card.value}</strong></div>`).join('');
 }
@@ -1050,9 +1210,10 @@ function setDocumentsFilter(filter) {
 
 function documentStatusClass(status) {
   const normalized = String(status || '').toUpperCase();
-  if (normalized === 'PAID') return 'is-paid';
+  if (normalized === 'PAID' || normalized === 'COMPLETED' || normalized === 'ISSUED') return 'is-paid';
   if (normalized === 'ACTIVE') return 'is-active';
-  if (normalized === 'QUOTED') return 'is-quoted';
+  if (normalized === 'CONVERTED') return 'is-quoted';
+  if (normalized === 'IN_PRODUCTION') return 'is-quoted';
   return 'is-pending';
 }
 
@@ -1072,8 +1233,9 @@ function renderDocumentsTable() {
 
   tableBody.innerHTML = filtered.map(doc => {
     const actions = [`<button type="button" onclick="viewDocumentFromList('${doc.type}', '${escapeHtml(doc.reference)}')">View</button>`];
-    if (doc.type === 'order') actions.push(`<button type="button" onclick="convertOrderToInvoiceFromList('${escapeHtml(doc.reference)}')">To invoice</button>`);
+    if (doc.type === 'quotation' && doc.status !== 'CONVERTED') actions.push(`<button type="button" onclick="convertQuoteToInvoiceFromList('${escapeHtml(doc.reference)}')">To invoice</button>`);
     if (doc.type === 'invoice' && doc.status !== 'PAID') actions.push(`<button type="button" onclick="confirmInvoicePaymentFromList('${escapeHtml(doc.reference)}')">Confirm payment</button>`);
+    if (doc.type === 'order' && doc.status !== 'COMPLETED') actions.push(`<button type="button" onclick="completeOrderFromList('${escapeHtml(doc.reference)}')">Mark completed</button>`);
     return `<tr>
       <td>${doc.timestamp ? new Date(doc.timestamp).toLocaleDateString('en-GB') : ''}</td>
       <td><span class="document-type-tag">${escapeHtml(doc.type)}</span></td>
@@ -1093,19 +1255,30 @@ function viewDocumentFromList(type, reference) {
   openDocumentPreview();
 }
 
-async function convertOrderToInvoiceFromList(orderReference) {
+async function convertQuoteToInvoiceFromList(quotationReference) {
+  const doc = allDocuments.find(entry => entry.type === 'quotation' && entry.reference === quotationReference);
+  const clientName = prompt('Client name for this invoice:', doc ? doc.clientName : '') || (doc ? doc.clientName : 'Valued Client');
+  const clientPhone = prompt('Client phone number:', doc ? doc.clientPhone : '') || (doc ? doc.clientPhone : '');
+  const deliveryCost = Number(prompt('Delivery / shipping cost (Kshs), leave blank for none:', '0')) || 0;
+  const extraCharges = deliveryCost > 0 ? [{ label: 'Delivery / shipping cost', amount: deliveryCost }] : [];
   try {
-    const response = await fetch(API_URL, {
-      method: 'POST',
-      headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-      body: JSON.stringify({ action: 'convert_order_to_invoice', orderReference })
-    });
-    const result = await response.json();
+    const result = await postApi({ action: 'convert_quote_to_invoice', quotationReference, clientName, clientPhone, extraCharges });
     if (result.status !== 'success') throw new Error(result.message || 'Invoice creation failed.');
     await loadDocumentsTracker();
   } catch (error) {
-    console.error('Order to invoice conversion failed:', error);
-    alert('The order could not be converted to an invoice. Please try again.');
+    console.error('Quotation to invoice conversion failed:', error);
+    alert(error.message || 'The quotation could not be converted to an invoice. Please try again.');
+  }
+}
+
+async function completeOrderFromList(orderReference) {
+  try {
+    const result = await postApi({ action: 'complete_order', orderReference });
+    if (result.status !== 'success') throw new Error(result.message || 'Order completion failed.');
+    await loadDocumentsTracker();
+  } catch (error) {
+    console.error('Order completion failed:', error);
+    alert(error.message || 'The order could not be marked as completed. Please try again.');
   }
 }
 
@@ -1114,17 +1287,13 @@ async function confirmInvoicePaymentFromList(invoiceReference) {
   if (!paymentMethod) return;
   const paymentReference = prompt('Payment reference or transaction code (optional):', '') || '';
   try {
-    const response = await fetch(API_URL, {
-      method: 'POST',
-      headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-      body: JSON.stringify({ action: 'confirm_invoice_payment', invoiceReference, paymentMethod, paymentReference })
-    });
-    const result = await response.json();
+    const result = await postApi({ action: 'confirm_invoice_payment', invoiceReference, paymentMethod, paymentReference });
     if (result.status !== 'success') throw new Error(result.message || 'Payment confirmation failed.');
+    // Confirming payment auto-creates a production Order server-side; refresh the whole tracker to show it.
     await loadDocumentsTracker();
   } catch (error) {
     console.error('Invoice payment confirmation failed:', error);
-    alert('The payment could not be confirmed. Please try again.');
+    alert(error.message || 'The payment could not be confirmed. Please try again.');
   }
 }
 
@@ -1161,22 +1330,40 @@ async function generateJPEG(docType, docRef) {
 
 async function shareDocumentViaWhatsApp() {
   if (!currentDocument) return;
-  await generateJPEG(currentDocument.type, currentDocument.reference);
+  const type = String(currentDocument.type || 'document').toLowerCase();
+  const status = String(currentDocument.status || 'PENDING').toUpperCase();
   const items = (currentDocument.items || []).map((item, index) => `${index + 1}. ${item.quantity} x ${item.title} - Kshs. ${Number(item.total || 0).toFixed(2)}`).join('\n');
-  const message = `*CAVALRY PUBLISHERS ${String(currentDocument.type || 'DOCUMENT').toUpperCase()}*\nReference: ${currentDocument.reference}\nStatus: ${currentDocument.status || 'PENDING'}\nClient: ${currentDocument.clientName || 'Valued Client'}\n\n${items}\n\n*TOTAL: Kshs. ${Number(currentDocument.total || 0).toLocaleString('en-US', { minimumFractionDigits: 2 })}*\n\nDocument image/PDF has been generated for download.`;
-  window.open(`https://wa.me/${COMPANY_WHATSAPP}?text=${encodeURIComponent(message)}`, '_blank');
-}
+  let note = '';
+  if (type === 'invoice' && status !== 'PAID') {
+    note = `\n\nPlease make payment to *Till No. ${TILL_NUMBER}* to confirm this order.\nProduction begins after receipt of payment. Delivery within 2 working days.`;
+  } else if (type === 'receipt') {
+    note = `\n\nPayment received. Your order has been placed and production begins.\nDelivery within 2 working days.`;
+  }
+  const message = `*CAVALRY PUBLISHERS ${type.toUpperCase()}*\nReference: ${currentDocument.reference}\nStatus: ${status}\nClient: ${currentDocument.clientName || 'Valued Client'}\n\n${items}\n\n*TOTAL: Kshs. ${Number(currentDocument.total || 0).toLocaleString('en-US', { minimumFractionDigits: 2 })}*${note}`;
 
-function buildCheckoutWhatsAppMessage(order) {
-  const itemLines = order.items.map((item, index) => `${index + 1}. ${item.quantity} × ${item.title}\n   ${item.mode === 'mass' ? 'Mass' : 'Sample'} | ${item.size} | ${item.pages} pages | Kshs. ${item.unitPrice.toFixed(2)} each\n   Amount: Kshs. ${item.total.toLocaleString('en-US', { minimumFractionDigits: 2 })}`);
-  return `*CAVALRY PUBLISHERS ORDER*\nReference: ${checkoutReference}\nClient: ${order.clientName}\nPhone: ${order.clientPhone || 'Not provided'}\n\n${itemLines.join('\n\n')}\n\nSubtotal: Kshs. ${order.subtotal.toLocaleString('en-US', { minimumFractionDigits: 2 })}\nDiscount: Kshs. ${order.discount.toLocaleString('en-US', { minimumFractionDigits: 2 })}\n*TOTAL: Kshs. ${order.total.toLocaleString('en-US', { minimumFractionDigits: 2 })}*\n\nPlease confirm payment instructions and production details.`;
-}
+  try {
+    const canvas = await html2canvas(document.getElementById('documentRenderSurface'), { backgroundColor: '#ffffff', scale: 2, useCORS: true });
+    const blob = await new Promise(resolve => canvas.toBlob(resolve, 'image/jpeg', .95));
+    const fileName = `Cavalry-${currentDocument.type}-${currentDocument.reference}.jpg`;
+    const file = new File([blob], fileName, { type: 'image/jpeg' });
 
-function sendCheckoutToWhatsApp() {
-  if (!cart.length) return;
-  if (!checkoutReference) checkoutReference = createCheckoutReference();
-  const order = getCurrentOrderSnapshot();
-  window.open(`https://wa.me/${COMPANY_WHATSAPP}?text=${encodeURIComponent(buildCheckoutWhatsAppMessage(order))}`, '_blank');
+    // Web Share API lets supported devices (mostly mobile) share the image and text together in one WhatsApp bubble.
+    if (navigator.canShare && navigator.canShare({ files: [file] })) {
+      await navigator.share({ files: [file], text: message, title: `Cavalry Publishers ${currentDocument.type}` });
+      return;
+    }
+
+    // Desktop/unsupported browsers: download the image and open WhatsApp with the text pre-filled for manual attachment.
+    const link = document.createElement('a');
+    link.download = fileName;
+    link.href = URL.createObjectURL(blob);
+    link.click();
+    window.open(`https://wa.me/${COMPANY_WHATSAPP}?text=${encodeURIComponent(`${message}\n\n(Please attach the image just downloaded: ${fileName})`)}`, '_blank');
+  } catch (error) {
+    if (error.name === 'AbortError') return;
+    console.error('WhatsApp share failed:', error);
+    alert('The document could not be shared. Please try again.');
+  }
 }
 
 function updateCartFab() {
@@ -1464,8 +1651,11 @@ document.getElementById('customModal').addEventListener('click', event => {
 document.getElementById('staffLoginModal').addEventListener('click', event => {
   if (event.target.id === 'staffLoginModal') closeStaffLoginModal();
 });
-document.getElementById('checkoutModal').addEventListener('click', event => {
-  if (event.target.id === 'checkoutModal') closeCheckoutModal();
+document.getElementById('invoiceModal').addEventListener('click', event => {
+  if (event.target.id === 'invoiceModal') closeInvoiceModal();
+});
+document.getElementById('paymentModal').addEventListener('click', event => {
+  if (event.target.id === 'paymentModal') closePaymentModal();
 });
 document.getElementById('documentPreviewModal').addEventListener('click', event => {
   if (event.target.id === 'documentPreviewModal') closeDocumentPreview();
@@ -1476,7 +1666,8 @@ document.getElementById('bookDetailModal').addEventListener('click', event => {
 document.addEventListener('keydown', event => {
   if (event.key === 'Escape') closeCustomModal();
   if (event.key === 'Escape') closeStaffLoginModal();
-  if (event.key === 'Escape') closeCheckoutModal();
+  if (event.key === 'Escape') closeInvoiceModal();
+  if (event.key === 'Escape') closePaymentModal();
   if (event.key === 'Escape') closeDocumentPreview();
   if (event.key === 'Escape') closeCart();
   if (event.key === 'Escape') closeBookDetails();
