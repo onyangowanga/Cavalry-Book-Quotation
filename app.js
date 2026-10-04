@@ -1237,13 +1237,13 @@ function renderDocumentsTable() {
     if (doc.type === 'invoice' && doc.status !== 'PAID') actions.push(`<button type="button" onclick="confirmInvoicePaymentFromList('${escapeHtml(doc.reference)}')">Confirm payment</button>`);
     if (doc.type === 'order' && doc.status !== 'COMPLETED') actions.push(`<button type="button" onclick="completeOrderFromList('${escapeHtml(doc.reference)}')">Mark completed</button>`);
     return `<tr>
-      <td>${doc.timestamp ? new Date(doc.timestamp).toLocaleDateString('en-GB') : ''}</td>
-      <td><span class="document-type-tag">${escapeHtml(doc.type)}</span></td>
-      <td>${escapeHtml(doc.reference)}</td>
-      <td>${escapeHtml(doc.clientName || 'Valued Client')}</td>
-      <td>${formatKshs(doc.total)}</td>
-      <td><span class="document-status-tag ${documentStatusClass(doc.status)}">${escapeHtml(doc.status || '')}</span></td>
-      <td><div class="documents-row-actions">${actions.join('')}</div></td>
+      <td data-label="Date">${doc.timestamp ? new Date(doc.timestamp).toLocaleDateString('en-GB') : ''}</td>
+      <td data-label="Type"><span class="document-type-tag">${escapeHtml(doc.type)}</span></td>
+      <td data-label="Reference">${escapeHtml(doc.reference)}</td>
+      <td data-label="Client">${escapeHtml(doc.clientName || 'Valued Client')}</td>
+      <td data-label="Total (Kshs)">${formatKshs(doc.total)}</td>
+      <td data-label="Status"><span class="document-status-tag ${documentStatusClass(doc.status)}">${escapeHtml(doc.status || '')}</span></td>
+      <td data-label="Actions"><div class="documents-row-actions">${actions.join('')}</div></td>
     </tr>`;
   }).join('');
 }
