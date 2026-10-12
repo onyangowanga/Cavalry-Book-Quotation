@@ -60,6 +60,8 @@ let currentDocument = null;
 let allDocuments = [];
 let documentsFilter = 'all';
 let customersDirectory = [];
+const DOCUMENTS_CACHE_KEY = 'cavalry-admin-documents-v1';
+let documentsRequest = null;
 
 const OFFSET_PAPER_COSTS = {
   'Bond 70': 1100,
@@ -1160,17 +1162,57 @@ async function confirmCurrentInvoicePayment() {
 async function loadDocumentsTracker() {
   if (!isStaff) return;
   const tableBody = document.getElementById('documentsTableBody');
-  tableBody.innerHTML = '<tr><td colspan="7" class="documents-empty">Loading documents...</td></tr>';
+  const syncStatus = document.getElementById('documentsSyncStatus');
+  if (documentsRequest) return documentsRequest;
+
+  if (!allDocuments.length) {
+    try {
+      const cached = sessionStorage.getItem(DOCUMENTS_CACHE_KEY);
+      if (cached) {
+        const parsed = JSON.parse(cached);
+        allDocuments = Array.isArray(parsed.documents) ? parsed.documents : [];
+        renderAccountingSummary();
+        renderDocumentsTable();
+        if (syncStatus) {
+          const cachedAt = parsed.savedAt ? new Date(parsed.savedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '';
+          syncStatus.textContent = cachedAt ? `Cached · ${cachedAt}` : 'Cached data';
+        }
+      }
+    } catch (error) {
+      sessionStorage.removeItem(DOCUMENTS_CACHE_KEY);
+    }
+  }
+
+  const hasCachedData = allDocuments.length > 0;
+  if (!hasCachedData) tableBody.innerHTML = '<tr><td colspan="7" class="documents-empty">Loading documents...</td></tr>';
+  if (syncStatus) syncStatus.textContent = hasCachedData ? 'Updating…' : 'Connecting…';
+
+  documentsRequest = (async () => {
   try {
     const result = await postApi({ action: 'list_documents', staffPassword });
     if (result.status !== 'success') throw new Error(result.message || 'Documents could not be loaded.');
     allDocuments = result.data || [];
+    try {
+      sessionStorage.setItem(DOCUMENTS_CACHE_KEY, JSON.stringify({ documents: allDocuments, savedAt: new Date().toISOString() }));
+    } catch (error) {
+      console.warn('Document cache could not be saved in this tab:', error);
+    }
     renderAccountingSummary();
     renderDocumentsTable();
+    if (syncStatus) syncStatus.textContent = `Updated ${new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`;
   } catch (error) {
     console.error('Loading documents failed:', error);
-    tableBody.innerHTML = '<tr><td colspan="7" class="documents-empty">Documents could not be loaded. Please refresh.</td></tr>';
+    if (allDocuments.length) {
+      renderAccountingSummary();
+      renderDocumentsTable();
+      if (syncStatus) syncStatus.textContent = 'Offline · showing cached data';
+    } else {
+      tableBody.innerHTML = '<tr><td colspan="7" class="documents-empty">Documents are unavailable offline. Connect and refresh to load them.</td></tr>';
+      if (syncStatus) syncStatus.textContent = 'Offline';
+    }
   }
+  })().finally(() => { documentsRequest = null; });
+  return documentsRequest;
 }
 
 function formatKshs(value) {

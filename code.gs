@@ -72,6 +72,23 @@ function listCustomers(ss) {
   return customers;
 }
 
+// Jenga HQ credentials/base URL live only in Script Properties (Project Settings > Script
+// Properties in the Apps Script editor) - never in code.gs source or any client-side file.
+function getJengaConfig() {
+  const props = PropertiesService.getScriptProperties();
+  const config = {
+    baseUrl: props.getProperty('JENGA_BASE_URL'),
+    merchantCode: props.getProperty('JENGA_MERCHANT_CODE'),
+    apiKey: props.getProperty('JENGA_API_KEY'),
+    consumerSecret: props.getProperty('JENGA_CONSUMER_SECRET'),
+    callbackSecret: props.getProperty('JENGA_CALLBACK_SECRET')
+  };
+  const required = ['baseUrl', 'merchantCode', 'apiKey', 'consumerSecret'];
+  const missing = required.filter(key => !config[key]);
+  if (missing.length) throw new Error('Missing Jenga configuration: ' + missing.join(', ') + '. Set it under Project Settings > Script Properties.');
+  return config;
+}
+
 /**
  * Reads parameters directly from the 'Parameters' tab and returns:
  * - rules: Object mapping SizeCode -> { label, bwRate, colorRate }

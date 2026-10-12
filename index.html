@@ -235,7 +235,10 @@
           <h2>Documents &amp; accounts</h2>
           <p>Track every quote, order, invoice and receipt, and confirm payments.</p>
         </div>
-        <button class="refresh-btn" type="button" onclick="loadDocumentsTracker()">Refresh</button>
+        <div class="documents-refresh-group">
+          <span id="documentsSyncStatus" class="documents-sync-status" role="status" aria-live="polite"></span>
+          <button class="refresh-btn" type="button" onclick="loadDocumentsTracker()">Refresh</button>
+        </div>
       </div>
 
       <div class="accounting-summary" id="accountingSummary"></div>
