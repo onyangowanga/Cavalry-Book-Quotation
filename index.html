@@ -177,61 +177,32 @@
       </section>
     </section>
 
-    <section id="offsetTabPanel" class="tab-panel offset-panel" role="tabpanel" aria-labelledby="offsetTabButton" hidden>
+    <section id="jobQuoteTabPanel" class="tab-panel documents-panel" role="tabpanel" aria-labelledby="documentsTabButton" hidden>
       <div class="offset-heading">
         <div>
-          <div class="eyebrow">Offset printing</div>
-          <h2>Build an offset quote</h2>
-          <p>Calculate plates, machine runs, paper, finishing and profit in one place.</p>
+          <div class="eyebrow">Admin · Other work</div>
+          <h2>Create a quotation</h2>
+          <p>Quote any service or job, then convert the quotation to an invoice and record payment as a receipt.</p>
         </div>
-        <div class="documents-refresh-group">
-          <button class="refresh-btn" type="button" onclick="switchAppTab('documents')">Admin dashboard</button>
-          <button class="refresh-btn" type="button" onclick="resetOffsetCalculator()">Reset calculator</button>
-        </div>
+        <button class="refresh-btn" type="button" onclick="switchAppTab('documents')">Admin dashboard</button>
       </div>
-
-      <div class="offset-input-grid">
-        <section class="offset-card">
-          <h3>Printing &amp; material specs</h3>
-          <div class="offset-fields">
-            <label><span class="field-label">Total pages</span><input id="offsetPages" type="number" min="1" placeholder="e.g. 32"></label>
-            <label><span class="field-label">Quantity / copies</span><input id="offsetQuantity" type="number" min="1" placeholder="e.g. 1000"></label>
-            <label><span class="field-label">Printed paper size</span><select id="offsetPaperSize"><option value="" selected disabled>Select size</option><option>A3</option><option>A4</option><option>A5</option><option>A6</option></select></label>
-            <label><span class="field-label">Number of colours</span><select id="offsetColors"><option value="" selected disabled>Select colours</option><option>1</option><option>2</option><option>3</option><option>4</option></select></label>
-            <label><span class="field-label">Printed sides</span><select id="offsetSides"><option value="" selected disabled>Select sides</option><option>Single sided</option><option>Double sided</option></select></label>
-            <label><span class="field-label">Printer type</span><select id="offsetMachine"><option value="" selected disabled>Select printer</option><option>GTO 46</option><option>SM</option></select></label>
-            <label><span class="field-label">Paper type</span><select id="offsetPaperType" onchange="toggleOffsetPaperCost()"><option value="" selected disabled>Select paper</option><option>Bond 70</option><option>Bond 80</option><option>Art 135</option><option>Art 150</option><option>Art 175</option><option>Others</option></select></label>
-            <label><span class="field-label">Others rim cost (Kshs / rim)</span><input id="offsetPaperCost" type="number" min="0" placeholder="Enter amount" disabled></label>
-          </div>
-        </section>
-
-        <section class="offset-card">
-          <h3>Optional finishing &amp; profit</h3>
-          <div class="offset-fields">
-            <label><span class="field-label">Cutting, overall</span><input id="offsetCutting" type="number" min="0" placeholder="Enter amount"></label>
-            <label><span class="field-label">Packaging, overall</span><input id="offsetPackaging" type="number" min="0" placeholder="Enter amount"></label>
-            <label><span class="field-label">Other fixed cost</span><input id="offsetOtherOverall" type="number" min="0" placeholder="Enter amount"></label>
-            <label><span class="field-label">Collection / copy</span><input id="offsetCollection" type="number" min="0" placeholder="Enter amount"></label>
-            <label><span class="field-label">Binding / copy</span><input id="offsetBinding" type="number" min="0" placeholder="Enter amount"></label>
-            <label><span class="field-label">Lamination / copy</span><input id="offsetLamination" type="number" min="0" placeholder="Enter amount"></label>
-            <label><span class="field-label">Cover cost / copy</span><input id="offsetCover" type="number" min="0" placeholder="Enter amount"></label>
-            <label><span class="field-label">Other variable / copy</span><input id="offsetOtherUnit" type="number" min="0" placeholder="Enter amount"></label>
-            <div class="offset-fixed-value"><span class="field-label">Profit margin</span><strong>20% of pre-profit cost</strong></div>
-          </div>
-        </section>
+      <div class="job-quote-client-fields">
+        <label><span class="field-label">Client name</span><input id="jobQuoteClientName" type="text" list="customerNamesList" autocomplete="off" placeholder="Client or business name" onchange="applyCustomerAutofill('jobQuoteClientName', 'jobQuoteClientPhone', this.value)"></label>
+        <label><span class="field-label">Client phone</span><input id="jobQuoteClientPhone" type="tel" autocomplete="tel" placeholder="Phone number"></label>
       </div>
-
-      <div class="offset-actions">
-        <button class="custom-btn" type="button" onclick="calculateOffsetQuote()">Calculate offset quote</button>
-        <div class="offset-history-controls">
-          <label class="offset-history-select"><span class="field-label">Recent quotes</span><select id="offsetHistory" disabled><option>No saved calculations</option></select></label>
-          <button class="refresh-btn" type="button" id="offsetLoadHistory" onclick="loadOffsetHistory()" disabled>Load</button>
+      <div class="job-quote-lines-heading"><h3>Quotation items</h3><button class="refresh-btn" type="button" onclick="addJobQuoteLine()">Add item</button></div>
+      <div id="jobQuoteLines" class="job-quote-lines">
+        <div class="job-quote-line">
+          <label class="job-quote-description"><span class="field-label">Description</span><input type="text" data-job-description placeholder="e.g. Graphic design service" maxlength="140" oninput="updateJobQuoteTotal()"></label>
+          <label><span class="field-label">Quantity</span><input type="number" data-job-quantity min="1" step="1" value="1" oninput="updateJobQuoteTotal()"></label>
+          <label><span class="field-label">Unit price (Kshs)</span><input type="number" data-job-price min="0.01" step="0.01" placeholder="0.00" oninput="updateJobQuoteTotal()"></label>
+          <label class="job-quote-production"><input type="checkbox" data-job-production><span>Requires production</span></label>
+          <button class="job-quote-remove" type="button" onclick="removeJobQuoteLine(this)" aria-label="Remove quotation item" title="Remove item">×</button>
         </div>
       </div>
-
-      <div class="offset-result-wrap">
-        <pre id="offsetResult" class="offset-result">Enter your specifications and calculate an offset quote.</pre>
-      </div>
+      <div class="job-quote-total"><span>Quotation total</span><strong id="jobQuoteTotal">Kshs. 0.00</strong></div>
+      <p id="jobQuoteStatus" class="checkout-status" role="status" aria-live="polite"></p>
+      <button id="createJobQuoteButton" class="custom-btn" type="button" onclick="createJobQuotation()">Create quotation</button>
     </section>
 
     <section id="documentsTabPanel" class="tab-panel documents-panel" role="tabpanel" aria-labelledby="documentsTabButton" hidden>
@@ -246,49 +217,34 @@
           <button class="refresh-btn" type="button" onclick="loadDocumentsTracker()">Refresh</button>
         </div>
       </div>
-
       <nav class="admin-dashboard-grid" aria-label="Admin pages">
-        <a class="admin-dashboard-card" href="#documentRecords" onclick="event.preventDefault(); document.getElementById('documentRecords').scrollIntoView({behavior:'smooth'});">
-          <span class="admin-dashboard-card-icon" aria-hidden="true">▤</span><span class="admin-dashboard-card-copy"><strong>Documents &amp; accounts</strong><small>Quotes, invoices, receipts and delivery notes</small></span><span class="admin-dashboard-card-arrow" aria-hidden="true">→</span>
-        </a>
-        <a class="admin-dashboard-card" href="#production" onclick="event.preventDefault(); switchAppTab('production');">
-          <span class="admin-dashboard-card-icon" aria-hidden="true">▣</span><span class="admin-dashboard-card-copy"><strong>Production</strong><small>Track book lines and mark printing complete</small></span><span class="admin-dashboard-card-arrow" aria-hidden="true">→</span>
-        </a>
-        <a class="admin-dashboard-card" href="#expenses" onclick="event.preventDefault(); switchAppTab('expenses');">
-          <span class="admin-dashboard-card-icon" aria-hidden="true">＋</span><span class="admin-dashboard-card-copy"><strong>Expenses</strong><small>Record and review business expenses</small></span><span class="admin-dashboard-card-arrow" aria-hidden="true">→</span>
-        </a>
-        <a class="admin-dashboard-card" href="#financials" onclick="event.preventDefault(); switchAppTab('finance');">
-          <span class="admin-dashboard-card-icon" aria-hidden="true">▥</span><span class="admin-dashboard-card-copy"><strong>Financial reports</strong><small>Monthly receipts, expenses and net cash profit</small></span><span class="admin-dashboard-card-arrow" aria-hidden="true">→</span>
-        </a>
-        <a class="admin-dashboard-card" href="#offset" onclick="event.preventDefault(); switchAppTab('offset');">
-          <span class="admin-dashboard-card-icon" aria-hidden="true">⌗</span><span class="admin-dashboard-card-copy"><strong>Offset calculator</strong><small>Build and review offset printing estimates</small></span><span class="admin-dashboard-card-arrow" aria-hidden="true">→</span>
-        </a>
+        <a class="admin-dashboard-card" href="#documentRecords" onclick="event.preventDefault(); document.getElementById('documentRecords').scrollIntoView({behavior:'smooth'});"><span class="admin-dashboard-card-icon" aria-hidden="true">▤</span><span class="admin-dashboard-card-copy"><strong>Documents &amp; accounts</strong><small>Quotes, invoices, receipts and delivery notes</small></span><span class="admin-dashboard-card-arrow" aria-hidden="true">→</span></a>
+        <a class="admin-dashboard-card" href="#jobquote" onclick="event.preventDefault(); switchAppTab('jobquote');"><span class="admin-dashboard-card-icon" aria-hidden="true">＋</span><span class="admin-dashboard-card-copy"><strong>Other-job quotation</strong><small>Quote services and work outside the book catalogue</small></span><span class="admin-dashboard-card-arrow" aria-hidden="true">→</span></a>
+        <a class="admin-dashboard-card" href="#production" onclick="event.preventDefault(); switchAppTab('production');"><span class="admin-dashboard-card-icon" aria-hidden="true">▣</span><span class="admin-dashboard-card-copy"><strong>Production</strong><small>Track book lines and mark printing complete</small></span><span class="admin-dashboard-card-arrow" aria-hidden="true">→</span></a>
+        <a class="admin-dashboard-card" href="#expenses" onclick="event.preventDefault(); switchAppTab('expenses');"><span class="admin-dashboard-card-icon" aria-hidden="true">＋</span><span class="admin-dashboard-card-copy"><strong>Expenses</strong><small>Record and review business expenses</small></span><span class="admin-dashboard-card-arrow" aria-hidden="true">→</span></a>
+        <a class="admin-dashboard-card" href="#financials" onclick="event.preventDefault(); switchAppTab('finance');"><span class="admin-dashboard-card-icon" aria-hidden="true">▥</span><span class="admin-dashboard-card-copy"><strong>Financial reports</strong><small>Monthly receipts, expenses and net cash profit</small></span><span class="admin-dashboard-card-arrow" aria-hidden="true">→</span></a>
+        <a class="admin-dashboard-card" href="#offset" onclick="event.preventDefault(); switchAppTab('offset');"><span class="admin-dashboard-card-icon" aria-hidden="true">⌗</span><span class="admin-dashboard-card-copy"><strong>Offset calculator</strong><small>Build and review offset printing estimates</small></span><span class="admin-dashboard-card-arrow" aria-hidden="true">→</span></a>
       </nav>
-
       <div id="documentRecords" class="admin-dashboard-records">
-      <div class="admin-dashboard-records-heading"><h3>Documents &amp; accounts</h3><span>Recent business activity</span></div>
-      <div class="accounting-summary" id="accountingSummary"></div>
-
-      <div class="documents-toolbar">
-        <div class="documents-filter" role="group" aria-label="Filter by document type">
-          <button type="button" class="documents-filter-button is-active" data-doc-filter="all" onclick="setDocumentsFilter('all')">All</button>
-          <button type="button" class="documents-filter-button" data-doc-filter="quotation" onclick="setDocumentsFilter('quotation')">Quotes</button>
-          <button type="button" class="documents-filter-button" data-doc-filter="order" onclick="setDocumentsFilter('order')">Orders</button>
-          <button type="button" class="documents-filter-button" data-doc-filter="invoice" onclick="setDocumentsFilter('invoice')">Invoices</button>
-          <button type="button" class="documents-filter-button" data-doc-filter="receipt" onclick="setDocumentsFilter('receipt')">Receipts</button>
-          <button type="button" class="documents-filter-button" data-doc-filter="delivery" onclick="setDocumentsFilter('delivery')">Deliveries</button>
+        <div class="admin-dashboard-records-heading"><h3>Documents &amp; accounts</h3><span>Recent business activity</span></div>
+        <div class="accounting-summary" id="accountingSummary"></div>
+        <div class="documents-toolbar">
+          <div class="documents-filter" role="group" aria-label="Filter by document type">
+            <button type="button" class="documents-filter-button is-active" data-doc-filter="all" onclick="setDocumentsFilter('all')">All</button>
+            <button type="button" class="documents-filter-button" data-doc-filter="quotation" onclick="setDocumentsFilter('quotation')">Quotes</button>
+            <button type="button" class="documents-filter-button" data-doc-filter="order" onclick="setDocumentsFilter('order')">Orders</button>
+            <button type="button" class="documents-filter-button" data-doc-filter="invoice" onclick="setDocumentsFilter('invoice')">Invoices</button>
+            <button type="button" class="documents-filter-button" data-doc-filter="receipt" onclick="setDocumentsFilter('receipt')">Receipts</button>
+            <button type="button" class="documents-filter-button" data-doc-filter="delivery" onclick="setDocumentsFilter('delivery')">Deliveries</button>
+          </div>
+          <div class="search-wrap documents-search"><input type="search" id="documentsSearchInput" name="documentsSearchQuery" placeholder="Search by reference or client..." oninput="renderDocumentsTable()" autocomplete="off"></div>
         </div>
-        <div class="search-wrap documents-search">
-          <input type="search" id="documentsSearchInput" name="documentsSearchQuery" placeholder="Search by reference or client..." oninput="renderDocumentsTable()" autocomplete="off">
+        <div class="documents-table-wrap">
+          <table class="documents-table">
+            <thead><tr><th>Date</th><th>Type</th><th>Reference</th><th>Client</th><th>Total (Kshs)</th><th>Status</th><th>Actions</th></tr></thead>
+            <tbody id="documentsTableBody"><tr><td colspan="7" class="documents-empty">Loading documents...</td></tr></tbody>
+          </table>
         </div>
-      </div>
-
-      <div class="documents-table-wrap">
-        <table class="documents-table">
-          <thead><tr><th>Date</th><th>Type</th><th>Reference</th><th>Client</th><th>Total (Kshs)</th><th>Status</th><th>Actions</th></tr></thead>
-          <tbody id="documentsTableBody"><tr><td colspan="7" class="documents-empty">Loading documents...</td></tr></tbody>
-        </table>
-      </div>
       </div>
     </section>
 
@@ -455,6 +411,7 @@
         <button class="refresh-btn" type="button" onclick="generatePDF(currentDocument.type, currentDocument.reference)">Download PDF</button>
         <button class="refresh-btn" type="button" onclick="generateJPEG(currentDocument.type, currentDocument.reference)">Download JPEG</button>
         <button class="whatsapp-btn" type="button" onclick="shareDocumentViaWhatsApp()">Share via WhatsApp</button>
+        <button class="custom-btn" type="button" id="convertQuotationButton" onclick="convertCurrentQuotationToInvoice()" hidden>Convert to invoice</button>
         <button class="custom-btn" type="button" id="proceedToPaymentButton" onclick="openPaymentModal()" hidden>Proceed to payment</button>
         <button class="custom-btn" type="button" id="confirmDocumentPaymentButton" onclick="confirmCurrentInvoicePayment()" hidden>Confirm payment</button>
       </div>

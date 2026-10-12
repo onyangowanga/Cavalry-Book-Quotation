@@ -265,7 +265,9 @@ function listDocumentsFromSheet(ss, sheetName, type) {
 }
 
 function isProductionItem(item) {
-  return Boolean(item && !item.isCharge && (item.mode || item.pages || item.size));
+  if (!item || item.isCharge) return false;
+  if (item.requiresProduction !== undefined) return item.requiresProduction === true;
+  return Boolean(item.mode || item.pages || item.size);
 }
 
 function createDeliveryForOrder(ss, orderRecord, orderData) {
@@ -501,10 +503,14 @@ function doPost(e) {
       const receiptSheet = getDocumentSheet(ss, 'receipts_log');
       receiptSheet.appendRow(documentRecord({ ...invoiceData, items: invoiceData.items }, receiptReference, invoiceData.reference, 'PAID', postData.paymentMethod, postData.paymentReference));
 
-      // Receipt -> Order: production tracking starts automatically once payment is confirmed.
-      const orderReference = createDocumentReference('ORD');
-      const orderSheet = getDocumentSheet(ss, 'orders_log');
-      orderSheet.appendRow(documentRecord({ ...invoiceData, items: invoiceData.items }, orderReference, receiptReference, 'IN_PRODUCTION', postData.paymentMethod, postData.paymentReference));
+      // Only jobs flagged for production enter the production queue after payment.
+      const productionItems = (invoiceData.items || []).filter(isProductionItem);
+      let orderReference = '';
+      if (productionItems.length) {
+        orderReference = createDocumentReference('ORD');
+        const orderSheet = getDocumentSheet(ss, 'orders_log');
+        orderSheet.appendRow(documentRecord({ ...invoiceData, items: invoiceData.items }, orderReference, receiptReference, 'IN_PRODUCTION', postData.paymentMethod, postData.paymentReference));
+      }
 
       return ContentService
         .createTextOutput(JSON.stringify({

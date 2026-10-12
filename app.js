@@ -249,7 +249,7 @@ function updateStaffUI() {
     displayBooks(query ? catalog.filter(b => `${b.title} ${b.author}`.toLowerCase().includes(query)) : catalog);
   }
   renderCart();
-  if (!isStaff && ['offset', 'documents', 'production', 'expenses', 'finance'].includes(activeAppTab)) switchAppTab('mass');
+  if (!isStaff && ['offset', 'documents', 'production', 'expenses', 'finance', 'jobquote'].includes(activeAppTab)) switchAppTab('mass');
   syncTopbarHeight();
 }
 
@@ -266,6 +266,7 @@ function switchAppTab(tabName) {
   const productionPanel = document.getElementById('productionTabPanel');
   const expensesPanel = document.getElementById('expensesTabPanel');
   const financePanel = document.getElementById('financeTabPanel');
+  const jobQuotePanel = document.getElementById('jobQuoteTabPanel');
   const catalogueButton = document.getElementById('catalogueTabButton');
   const massButton = document.getElementById('massTabButton');
   const offsetButton = document.getElementById('offsetTabButton');
@@ -273,19 +274,20 @@ function switchAppTab(tabName) {
   const productionButton = document.getElementById('productionTabButton');
   const expensesButton = document.getElementById('expensesTabButton');
   const financeButton = document.getElementById('financeTabButton');
-  const adminTabs = ['offset', 'documents', 'production', 'expenses', 'finance'];
+  const adminTabs = ['offset', 'documents', 'production', 'expenses', 'finance', 'jobquote'];
   const requestedTab = adminTabs.includes(tabName) && !isStaff ? 'mass' : tabName;
   activeAppTab = requestedTab;
-  const panelsByName = { catalogue: cataloguePanel, mass: massPanel, offset: offsetPanel, documents: documentsPanel, production: productionPanel, expenses: expensesPanel, finance: financePanel };
+  const panelsByName = { catalogue: cataloguePanel, mass: massPanel, offset: offsetPanel, documents: documentsPanel, production: productionPanel, expenses: expensesPanel, finance: financePanel, jobquote: jobQuotePanel };
   const activePanel = panelsByName[requestedTab] || cataloguePanel;
-  [cataloguePanel, massPanel, offsetPanel, documentsPanel, productionPanel, expensesPanel, financePanel].forEach(panel => {
+  [cataloguePanel, massPanel, offsetPanel, documentsPanel, productionPanel, expensesPanel, financePanel, jobQuotePanel].forEach(panel => {
+    if (!panel) return;
     const isActive = panel === activePanel;
     panel.hidden = !isActive;
     panel.classList.toggle('is-active', isActive);
   });
   [[catalogueButton, 'catalogue'], [massButton, 'mass'], [offsetButton, 'offset'], [documentsButton, 'documents'], [productionButton, 'production'], [expensesButton, 'expenses'], [financeButton, 'finance']].forEach(([button, name]) => {
     if (!button) return;
-    const isActive = name === requestedTab;
+    const isActive = name === requestedTab || (name === 'documents' && requestedTab === 'jobquote');
     button.classList.toggle('is-active', isActive);
     button.setAttribute('aria-selected', String(isActive));
   });
@@ -293,6 +295,101 @@ function switchAppTab(tabName) {
   if (requestedTab === 'production') loadProductionQueue();
   if (requestedTab === 'expenses') loadExpensesTab();
   if (requestedTab === 'finance') loadFinancials();
+}
+
+function addJobQuoteLine() {
+  document.getElementById('jobQuoteLines').insertAdjacentHTML('beforeend', `<div class="job-quote-line">
+    <label class="job-quote-description"><span class="field-label">Description</span><input type="text" data-job-description placeholder="e.g. Graphic design service" maxlength="140" oninput="updateJobQuoteTotal()"></label>
+    <label><span class="field-label">Quantity</span><input type="number" data-job-quantity min="1" step="1" value="1" oninput="updateJobQuoteTotal()"></label>
+    <label><span class="field-label">Unit price (Kshs)</span><input type="number" data-job-price min="0.01" step="0.01" placeholder="0.00" oninput="updateJobQuoteTotal()"></label>
+    <label class="job-quote-production"><input type="checkbox" data-job-production><span>Requires production</span></label>
+    <button class="job-quote-remove" type="button" onclick="removeJobQuoteLine(this)" aria-label="Remove quotation item" title="Remove item">×</button>
+  </div>`);
+}
+
+function removeJobQuoteLine(button) {
+  const rows = document.querySelectorAll('.job-quote-line');
+  if (rows.length <= 1) {
+    rows[0].querySelector('[data-job-description]').value = '';
+    rows[0].querySelector('[data-job-quantity]').value = '1';
+    rows[0].querySelector('[data-job-price]').value = '';
+    rows[0].querySelector('[data-job-production]').checked = false;
+  } else {
+    button.closest('.job-quote-line').remove();
+  }
+  updateJobQuoteTotal();
+}
+
+function getJobQuoteItems() {
+  return [...document.querySelectorAll('.job-quote-line')].map(row => {
+    const title = row.querySelector('[data-job-description]').value.trim();
+    const quantity = Number(row.querySelector('[data-job-quantity]').value);
+    const unitPrice = Number(row.querySelector('[data-job-price]').value);
+    return {
+      title,
+      quantity,
+      unitPrice,
+      total: quantity * unitPrice,
+      mode: '',
+      size: '',
+      requiresProduction: row.querySelector('[data-job-production]').checked
+    };
+  });
+}
+
+function updateJobQuoteTotal() {
+  const total = getJobQuoteItems().reduce((sum, item) => sum + (Number.isFinite(item.total) ? item.total : 0), 0);
+  document.getElementById('jobQuoteTotal').textContent = formatKshs(total);
+}
+
+async function createJobQuotation() {
+  if (!isStaff) return;
+  const clientName = document.getElementById('jobQuoteClientName').value.trim();
+  const clientPhone = document.getElementById('jobQuoteClientPhone').value.trim();
+  const items = getJobQuoteItems();
+  const status = document.getElementById('jobQuoteStatus');
+  if (!clientName) {
+    status.textContent = 'Enter the client name.';
+    return;
+  }
+  if (!items.length || items.some(item => !item.title || !Number.isInteger(item.quantity) || item.quantity < 1 || !Number.isFinite(item.unitPrice) || item.unitPrice <= 0)) {
+    status.textContent = 'Each item needs a description, positive whole-number quantity, and unit price greater than zero.';
+    return;
+  }
+  const total = items.reduce((sum, item) => sum + item.total, 0);
+  const button = document.getElementById('createJobQuoteButton');
+  button.disabled = true;
+  status.textContent = 'Creating quotation...';
+  try {
+    const result = await postApi({
+      action: 'log_quote',
+      clientName,
+      clientPhone,
+      items,
+      itemsSummary: items.map(item => `${item.quantity}x ${item.title}`).join('; '),
+      subtotal: total,
+      discount: 0,
+      total,
+      taxBreakdown: 'OTHER_JOB'
+    });
+    if (result.status !== 'success') throw new Error(result.message || 'Quotation could not be created.');
+    currentDocument = { type: 'quotation', timestamp: new Date().toISOString(), reference: result.reference, clientName, clientPhone, items, subtotal: total, discount: 0, total, taxBreakdown: 'OTHER_JOB', status: 'ACTIVE' };
+    currentQuotationReference = result.reference;
+    currentDocument.reference = result.reference;
+    await loadDocumentsTracker();
+    status.textContent = `Quotation ${result.reference} created. Convert it to an invoice from its preview when ready.`;
+    openDocumentPreview();
+  } catch (error) {
+    console.error('Other-job quotation failed:', error);
+    status.textContent = error.message || 'Quotation could not be created. Please try again.';
+  } finally {
+    button.disabled = false;
+  }
+}
+
+async function convertCurrentQuotationToInvoice() {
+  if (!isStaff || !currentDocument || currentDocument.type !== 'quotation') return;
+  await convertQuoteToInvoiceFromList(currentDocument.reference);
 }
 
 function switchMassCalculator(calculatorName) {
@@ -1130,11 +1227,12 @@ function renderDocumentHtml(documentData) {
   const status = String(documentData.status || 'PENDING').toUpperCase();
   const items = documentData.items || [];
   const type = String(documentData.type || 'invoice').toLowerCase();
+  const requiresProduction = items.some(isProductionBookItem);
   let noteHtml = '';
   if (type === 'invoice' && status !== 'PAID') {
-    noteHtml = `<div class="document-payment-note">Please make payment of <strong>Kshs. ${Number(documentData.total || 0).toLocaleString('en-US', { minimumFractionDigits: 2 })}</strong> to <strong>Till No. ${TILL_NUMBER}</strong> to confirm this order.<br>Production begins after receipt of payment. Delivery within 2 working days.</div>`;
+    noteHtml = `<div class="document-payment-note">Please make payment of <strong>Kshs. ${Number(documentData.total || 0).toLocaleString('en-US', { minimumFractionDigits: 2 })}</strong> to <strong>Till No. ${TILL_NUMBER}</strong> to confirm this ${requiresProduction ? 'order' : 'invoice'}.${requiresProduction ? '<br>Production begins after receipt of payment. Delivery within 2 working days.' : ''}</div>`;
   } else if (type === 'receipt') {
-    noteHtml = `<div class="document-payment-note is-success">Payment received. Your order has been placed and production begins.<br>Delivery within 2 working days.</div>`;
+    noteHtml = `<div class="document-payment-note is-success">${requiresProduction ? 'Payment received. Your order has been placed and production begins.<br>Delivery within 2 working days.' : 'Payment received. Thank you for your business.'}</div>`;
   }
   return `<img class="document-watermark-logo" src="${COMPANY_LOGO_URL}" alt="" crossorigin="anonymous" aria-hidden="true" onerror="this.style.display='none';">
     <header class="document-render-header">
@@ -1156,6 +1254,8 @@ function openDocumentPreview() {
   document.getElementById('documentPreviewTitle').textContent = `${currentDocument.type || 'Document'} ${currentDocument.reference || ''}`;
   document.getElementById('documentRenderSurface').innerHTML = renderDocumentHtml(currentDocument);
   const isPendingInvoice = currentDocument.type === 'invoice' && currentDocument.status !== 'PAID';
+  const isActiveQuotation = isStaff && currentDocument.type === 'quotation' && currentDocument.status === 'ACTIVE';
+  document.getElementById('convertQuotationButton').hidden = !isActiveQuotation;
   document.getElementById('proceedToPaymentButton').hidden = !isPendingInvoice;
   document.getElementById('confirmDocumentPaymentButton').hidden = !(isStaff && isPendingInvoice);
   document.getElementById('documentPreviewModal').style.display = 'flex';
@@ -1239,7 +1339,9 @@ async function loadDocumentsTracker() {
 }
 
 function isProductionBookItem(item) {
-  return Boolean(item && !item.isCharge && (item.mode || item.pages || item.size));
+  if (!item || item.isCharge) return false;
+  if (item.requiresProduction !== undefined) return item.requiresProduction === true;
+  return Boolean(item.mode || item.pages || item.size);
 }
 
 async function loadProductionQueue() {
@@ -1508,7 +1610,8 @@ function viewDocumentFromList(type, reference) {
 }
 
 async function convertQuoteToInvoiceFromList(quotationReference) {
-  const doc = allDocuments.find(entry => entry.type === 'quotation' && entry.reference === quotationReference);
+  const doc = allDocuments.find(entry => entry.type === 'quotation' && entry.reference === quotationReference)
+    || (currentDocument && currentDocument.type === 'quotation' && currentDocument.reference === quotationReference ? currentDocument : null);
   const clientName = prompt('Client name for this invoice:', doc ? doc.clientName : '') || (doc ? doc.clientName : 'Valued Client');
   const clientPhone = prompt('Client phone number:', doc ? doc.clientPhone : '') || (doc ? doc.clientPhone : '');
   const deliveryCost = Number(prompt('Delivery / shipping cost (Kshs), leave blank for none:', '0')) || 0;
@@ -1516,7 +1619,11 @@ async function convertQuoteToInvoiceFromList(quotationReference) {
   try {
     const result = await postApi({ action: 'convert_quote_to_invoice', quotationReference, clientName, clientPhone, extraCharges });
     if (result.status !== 'success') throw new Error(result.message || 'Invoice creation failed.');
+    currentDocument = result.data;
+    currentDocument.type = 'invoice';
+    currentDocument.reference = result.reference;
     await loadDocumentsTracker();
+    openDocumentPreview();
   } catch (error) {
     console.error('Quotation to invoice conversion failed:', error);
     alert(error.message || 'The quotation could not be converted to an invoice. Please try again.');
@@ -1573,12 +1680,13 @@ async function shareDocumentViaWhatsApp() {
   if (!currentDocument) return;
   const type = String(currentDocument.type || 'document').toLowerCase();
   const status = String(currentDocument.status || 'PENDING').toUpperCase();
+  const requiresProduction = (currentDocument.items || []).some(isProductionBookItem);
   const items = (currentDocument.items || []).map((item, index) => `${index + 1}. ${item.quantity} x ${item.title} - Kshs. ${Number(item.total || 0).toFixed(2)}`).join('\n');
   let note = '';
   if (type === 'invoice' && status !== 'PAID') {
-    note = `\n\nPlease make payment to *Till No. ${TILL_NUMBER}* to confirm this order.\nProduction begins after receipt of payment. Delivery within 2 working days.`;
+    note = `\n\nPlease make payment to *Till No. ${TILL_NUMBER}* to confirm this ${requiresProduction ? 'order' : 'invoice'}.${requiresProduction ? '\nProduction begins after receipt of payment. Delivery within 2 working days.' : ''}`;
   } else if (type === 'receipt') {
-    note = `\n\nPayment received. Your order has been placed and production begins.\nDelivery within 2 working days.`;
+    note = requiresProduction ? `\n\nPayment received. Your order has been placed and production begins.\nDelivery within 2 working days.` : '\n\nPayment received. Thank you for your business.';
   }
   const message = `*CAVALRY PUBLISHERS ${type.toUpperCase()}*\nReference: ${currentDocument.reference}\nStatus: ${status}\nClient: ${currentDocument.clientName || 'Valued Client'}\n\n${items}\n\n*TOTAL: Kshs. ${Number(currentDocument.total || 0).toLocaleString('en-US', { minimumFractionDigits: 2 })}*${note}`;
 

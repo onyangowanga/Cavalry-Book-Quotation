@@ -72,6 +72,20 @@ h1 { font-weight: 700; font-size: clamp(1.8rem, 3vw, 2.45rem); line-height: 1.04
 .admin-dashboard-records-heading { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 8px; margin: 0 0 10px; }
 .admin-dashboard-records-heading h3 { font-size: 1rem; }
 .admin-dashboard-records-heading span { color: var(--muted); font-size: .76rem; }
+.job-quote-client-fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; margin: 14px 0 22px; }
+.job-quote-client-fields input, .job-quote-line input:not([type="checkbox"]) { width: 100%; min-width: 0; padding: 10px 11px; border: 1px solid var(--line); border-radius: 8px; background: #fff; color: var(--ink); }
+.job-quote-lines-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 10px; }
+.job-quote-lines-heading h3 { font-size: 1rem; }
+.job-quote-lines { display: grid; }
+.job-quote-line { display: grid; grid-template-columns: minmax(180px, 2fr) minmax(80px, .65fr) minmax(130px, 1fr) minmax(145px, 1fr) 36px; align-items: end; gap: 10px; padding: 12px 0; border-bottom: 1px solid var(--line); }
+.job-quote-line label { min-width: 0; }
+.job-quote-production { display: flex; align-items: center; gap: 7px; min-height: 39px; color: var(--ink); font-size: .76rem; }
+.job-quote-production input { width: auto; accent-color: var(--red); }
+.job-quote-remove { width: 36px; height: 36px; border: 1px solid var(--line); border-radius: 8px; background: #fff; color: var(--muted); font-size: 1.2rem; cursor: pointer; }
+.job-quote-remove:hover { border-color: var(--red); color: var(--red); }
+.job-quote-total { display: flex; align-items: baseline; justify-content: flex-end; gap: 18px; margin-top: 16px; padding: 14px; border-radius: 8px; background: #f7f3ef; }
+.job-quote-total span { color: var(--muted); font-size: .8rem; font-weight: 700; }
+.job-quote-total strong { color: var(--red); font-size: 1.15rem; }
 .accounting-summary { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; margin: 18px 0; }
 .accounting-summary > div { padding: 15px 16px; border: 1px solid var(--line); border-radius: 12px; background: #fff; }
 .accounting-summary span { display: block; color: var(--muted); font-size: .68rem; font-weight: 800; text-transform: uppercase; letter-spacing: .04em; }
@@ -359,6 +373,9 @@ h1 { font-weight: 700; font-size: clamp(1.8rem, 3vw, 2.45rem); line-height: 1.04
   .quote-panel { left: 0; right: 0; width: 100vw; max-width: 100vw; border-radius: 0; }
   .offset-input-grid { grid-template-columns: 1fr; }
   .documents-panel, .documents-toolbar > * { min-width: 0; }
+  .job-quote-line { grid-template-columns: minmax(0, 1fr) minmax(0, .7fr); align-items: end; }
+  .job-quote-description { grid-column: 1 / -1; }
+  .job-quote-production { align-self: center; }
   .documents-refresh-group { width: 100%; justify-content: space-between; }
   .expense-entry-form { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .expense-entry-form .expense-description-field { grid-column: 1 / -1; }
@@ -390,6 +407,12 @@ h1 { font-weight: 700; font-size: clamp(1.8rem, 3vw, 2.45rem); line-height: 1.04
   .catalog-panel { padding: 13px; border-radius: 16px; }
   .offset-panel { padding: 13px; border-radius: 16px; }
   .documents-panel { padding: 13px; border-radius: 16px; }
+  .job-quote-client-fields { grid-template-columns: 1fr; }
+  .job-quote-line { grid-template-columns: minmax(0, 1fr) 36px; }
+  .job-quote-description { grid-column: 1 / -1; }
+  .job-quote-line label:not(.job-quote-description) { grid-column: 1 / 2; }
+  .job-quote-production { grid-column: 1 / 2; }
+  .job-quote-remove { grid-column: 2 / 3; grid-row: 2 / span 4; align-self: center; }
   .documents-toolbar { flex-direction: column; align-items: stretch; }
   .documents-refresh-group { flex-wrap: wrap; justify-content: flex-start; }
   .finance-month-field { flex: 1 1 100%; }
