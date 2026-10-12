@@ -1,4 +1,4 @@
-const CACHE_NAME = 'cavalry-quote-builder-v13';
+const CACHE_NAME = 'cavalry-quote-builder-v16';
 const APP_SHELL = [
   './',
   './index.html',

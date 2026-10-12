@@ -39,7 +39,10 @@
       <button class="app-tab is-active" id="catalogueTabButton" role="tab" aria-selected="true" aria-controls="catalogueTabPanel" onclick="switchAppTab('catalogue')">Catalogue quote</button>
       <button class="app-tab" id="massTabButton" role="tab" aria-selected="false" aria-controls="massTabPanel" onclick="switchAppTab('mass')">Mass printing</button>
       <button class="app-tab" id="offsetTabButton" role="tab" aria-selected="false" aria-controls="offsetTabPanel" onclick="switchAppTab('offset')" style="display:none;">Admin offset</button>
-      <button class="app-tab" id="documentsTabButton" role="tab" aria-selected="false" aria-controls="documentsTabPanel" onclick="switchAppTab('documents')" style="display:none;">Documents &amp; accounts</button>
+      <button class="app-tab" id="documentsTabButton" role="tab" aria-selected="false" aria-controls="documentsTabPanel" onclick="switchAppTab('documents')" style="display:none;">Admin dashboard</button>
+      <button class="app-tab" id="productionTabButton" role="tab" aria-selected="false" aria-controls="productionTabPanel" onclick="switchAppTab('production')" style="display:none;">Production</button>
+      <button class="app-tab" id="expensesTabButton" role="tab" aria-selected="false" aria-controls="expensesTabPanel" onclick="switchAppTab('expenses')" style="display:none;">Expenses</button>
+      <button class="app-tab" id="financeTabButton" role="tab" aria-selected="false" aria-controls="financeTabPanel" onclick="switchAppTab('finance')" style="display:none;">Financials</button>
     </nav>
 
     <div id="catalogueTabPanel" class="tab-panel is-active" role="tabpanel" aria-labelledby="catalogueTabButton">
@@ -181,7 +184,10 @@
           <h2>Build an offset quote</h2>
           <p>Calculate plates, machine runs, paper, finishing and profit in one place.</p>
         </div>
-        <button class="refresh-btn" type="button" onclick="resetOffsetCalculator()">Reset calculator</button>
+        <div class="documents-refresh-group">
+          <button class="refresh-btn" type="button" onclick="switchAppTab('documents')">Admin dashboard</button>
+          <button class="refresh-btn" type="button" onclick="resetOffsetCalculator()">Reset calculator</button>
+        </div>
       </div>
 
       <div class="offset-input-grid">
@@ -231,9 +237,9 @@
     <section id="documentsTabPanel" class="tab-panel documents-panel" role="tabpanel" aria-labelledby="documentsTabButton" hidden>
       <div class="offset-heading">
         <div>
-          <div class="eyebrow">Admin</div>
-          <h2>Documents &amp; accounts</h2>
-          <p>Track every quote, order, invoice and receipt, and confirm payments.</p>
+          <div class="eyebrow">Admin workspace</div>
+          <h2>Admin dashboard</h2>
+          <p>Choose a work area or review recent business documents below.</p>
         </div>
         <div class="documents-refresh-group">
           <span id="documentsSyncStatus" class="documents-sync-status" role="status" aria-live="polite"></span>
@@ -241,6 +247,26 @@
         </div>
       </div>
 
+      <nav class="admin-dashboard-grid" aria-label="Admin pages">
+        <a class="admin-dashboard-card" href="#documentRecords" onclick="event.preventDefault(); document.getElementById('documentRecords').scrollIntoView({behavior:'smooth'});">
+          <span class="admin-dashboard-card-icon" aria-hidden="true">▤</span><span class="admin-dashboard-card-copy"><strong>Documents &amp; accounts</strong><small>Quotes, invoices, receipts and delivery notes</small></span><span class="admin-dashboard-card-arrow" aria-hidden="true">→</span>
+        </a>
+        <a class="admin-dashboard-card" href="#production" onclick="event.preventDefault(); switchAppTab('production');">
+          <span class="admin-dashboard-card-icon" aria-hidden="true">▣</span><span class="admin-dashboard-card-copy"><strong>Production</strong><small>Track book lines and mark printing complete</small></span><span class="admin-dashboard-card-arrow" aria-hidden="true">→</span>
+        </a>
+        <a class="admin-dashboard-card" href="#expenses" onclick="event.preventDefault(); switchAppTab('expenses');">
+          <span class="admin-dashboard-card-icon" aria-hidden="true">＋</span><span class="admin-dashboard-card-copy"><strong>Expenses</strong><small>Record and review business expenses</small></span><span class="admin-dashboard-card-arrow" aria-hidden="true">→</span>
+        </a>
+        <a class="admin-dashboard-card" href="#financials" onclick="event.preventDefault(); switchAppTab('finance');">
+          <span class="admin-dashboard-card-icon" aria-hidden="true">▥</span><span class="admin-dashboard-card-copy"><strong>Financial reports</strong><small>Monthly receipts, expenses and net cash profit</small></span><span class="admin-dashboard-card-arrow" aria-hidden="true">→</span>
+        </a>
+        <a class="admin-dashboard-card" href="#offset" onclick="event.preventDefault(); switchAppTab('offset');">
+          <span class="admin-dashboard-card-icon" aria-hidden="true">⌗</span><span class="admin-dashboard-card-copy"><strong>Offset calculator</strong><small>Build and review offset printing estimates</small></span><span class="admin-dashboard-card-arrow" aria-hidden="true">→</span>
+        </a>
+      </nav>
+
+      <div id="documentRecords" class="admin-dashboard-records">
+      <div class="admin-dashboard-records-heading"><h3>Documents &amp; accounts</h3><span>Recent business activity</span></div>
       <div class="accounting-summary" id="accountingSummary"></div>
 
       <div class="documents-toolbar">
@@ -261,6 +287,75 @@
         <table class="documents-table">
           <thead><tr><th>Date</th><th>Type</th><th>Reference</th><th>Client</th><th>Total (Kshs)</th><th>Status</th><th>Actions</th></tr></thead>
           <tbody id="documentsTableBody"><tr><td colspan="7" class="documents-empty">Loading documents...</td></tr></tbody>
+        </table>
+      </div>
+      </div>
+    </section>
+
+    <section id="productionTabPanel" class="tab-panel documents-panel" role="tabpanel" aria-labelledby="productionTabButton" hidden>
+      <div class="offset-heading">
+        <div>
+          <div class="eyebrow">Admin · Production</div>
+          <h2>Books in production</h2>
+          <p>Mark each book line printed. Orders complete and delivery notes are created when all book lines are printed.</p>
+        </div>
+        <div class="documents-refresh-group">
+          <button class="refresh-btn" type="button" onclick="switchAppTab('documents')">Admin dashboard</button>
+          <span id="productionQueueCount" class="documents-sync-status" role="status" aria-live="polite"></span>
+          <button class="refresh-btn" type="button" onclick="loadProductionQueue()">Refresh queue</button>
+        </div>
+      </div>
+      <div class="documents-table-wrap">
+        <table class="documents-table production-table">
+          <thead><tr><th>Order</th><th>Client</th><th>Book</th><th>Qty</th><th>Specifications</th><th>Print status</th><th>Action</th></tr></thead>
+          <tbody id="productionTableBody"><tr><td colspan="7" class="documents-empty">Loading production queue...</td></tr></tbody>
+        </table>
+      </div>
+    </section>
+
+    <section id="financeTabPanel" class="tab-panel documents-panel" role="tabpanel" aria-labelledby="financeTabButton" hidden>
+      <div class="offset-heading">
+        <div>
+          <div class="eyebrow">Admin · Finance</div>
+          <h2>Monthly financial report</h2>
+          <p>Net cash profit is payments received minus expenses recorded for the selected month.</p>
+        </div>
+        <div class="documents-refresh-group">
+          <button class="refresh-btn" type="button" onclick="switchAppTab('documents')">Admin dashboard</button>
+          <label class="finance-month-field"><span class="field-label">Report month</span><input id="financeMonth" type="month" onchange="renderMonthlyFinance()"></label>
+          <button class="refresh-btn" type="button" onclick="loadFinancials()">Refresh report</button>
+          <button class="refresh-btn" type="button" onclick="downloadMonthlyFinanceReport()">Download CSV</button>
+        </div>
+      </div>
+      <div id="financeSummary" class="accounting-summary"></div>
+    </section>
+
+    <section id="expensesTabPanel" class="tab-panel documents-panel" role="tabpanel" aria-labelledby="expensesTabButton" hidden>
+      <div class="offset-heading">
+        <div>
+          <div class="eyebrow">Admin · Expenses</div>
+          <h2>Expense register</h2>
+        </div>
+        <div class="documents-refresh-group">
+          <button class="refresh-btn" type="button" onclick="switchAppTab('documents')">Admin dashboard</button>
+          <span id="expenseStatus" class="documents-sync-status" role="status" aria-live="polite"></span>
+          <button class="refresh-btn" type="button" onclick="loadExpensesTab()">Refresh expenses</button>
+        </div>
+      </div>
+      <section class="expense-entry-section">
+        <h3>Record an expense</h3>
+        <form id="expenseForm" class="expense-entry-form" onsubmit="addExpense(event)">
+          <label><span class="field-label">Date</span><input id="expenseDate" type="date" required></label>
+          <label><span class="field-label">Category</span><select id="expenseCategory" required><option value="" selected disabled>Select category</option><option>Paper and materials</option><option>Production</option><option>Delivery and transport</option><option>Utilities</option><option>Rent</option><option>Salaries</option><option>Equipment and maintenance</option><option>Marketing</option><option>Other</option></select></label>
+          <label class="expense-description-field"><span class="field-label">Description</span><input id="expenseDescription" type="text" maxlength="180" placeholder="Optional details"></label>
+          <label><span class="field-label">Amount (Kshs)</span><input id="expenseAmount" type="number" min="0.01" step="0.01" required placeholder="0.00"></label>
+          <button id="addExpenseButton" class="custom-btn" type="submit">Add expense</button>
+        </form>
+      </section>
+      <div class="documents-table-wrap">
+        <table class="documents-table">
+          <thead><tr><th>Date</th><th>Category</th><th>Description</th><th>Amount</th><th>Recorded by</th></tr></thead>
+          <tbody id="expensesTableBody"><tr><td colspan="5" class="documents-empty">Loading expenses...</td></tr></tbody>
         </table>
       </div>
     </section>
@@ -374,7 +469,7 @@
         <button aria-label="Close custom book dialog" onclick="closeCustomModal()" style="border:0; background:none; font-size:1.4rem; cursor:pointer;">&times;</button>
       </div>
       <div class="modal-body">
-        <label><span class="field-label">Upload PDF (Auto-detect pages)</span>
+        <label><span class="field-label">Book PDF (required to save to catalogue; pages auto-detected)</span>
           <input type="file" id="pdfUpload" accept="application/pdf" onchange="handlePdfUpload(this)">
         </label>
         <label><span class="field-label">Book Title *</span><input type="text" id="customTitle" required></label>
@@ -390,7 +485,14 @@
             <option value="3">A6 Size</option>
           </select>
         </label>
-        <button class="custom-btn" style="margin-top:10px; width:100%;" onclick="submitCustomBook()">Calculate Cost & Save</button>
+        <button id="customCalculateButton" class="custom-btn" type="button" style="margin-top:10px; width:100%;" onclick="submitCustomBook()">Calculate price</button>
+        <section id="customQuoteResult" class="custom-quote-result" hidden aria-live="polite">
+          <div class="custom-quote-price"><span>Calculated unit price</span><strong id="customQuoteUnitPrice"></strong></div>
+          <label class="custom-choice"><input id="customSaveToCatalogue" type="checkbox"><span>Save to the book catalogue and email the PDF to cavalrypublishers@gmail.com</span></label>
+          <label class="custom-choice"><input id="customAddToQuote" type="checkbox"><span>Add this book to the current quote</span></label>
+          <p id="customQuoteStatus" class="custom-quote-status" role="status" aria-live="polite"></p>
+          <button id="customApplyChoicesButton" class="custom-btn" type="button" onclick="applyCustomBookChoices()">Apply choices</button>
+        </section>
       </div>
     </div>
   </div>

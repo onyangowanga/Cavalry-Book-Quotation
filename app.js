@@ -52,6 +52,7 @@ const MINIMUM_ORDER_AMOUNT = 500;
 
 let isStaff = false;
 let staffPassword = '';
+let staffUsername = '';
 let offsetHistory = [];
 let activeAppTab = 'catalogue';
 let currentQuotationReference = '';
@@ -62,6 +63,9 @@ let documentsFilter = 'all';
 let customersDirectory = [];
 const DOCUMENTS_CACHE_KEY = 'cavalry-admin-documents-v1';
 let documentsRequest = null;
+let customBookQuoteDraft = null;
+let allExpenses = [];
+let expensesRequest = null;
 
 const OFFSET_PAPER_COSTS = {
   'Bond 70': 1100,
@@ -176,6 +180,7 @@ async function submitStaffLogin() {
     const result = await postApi({ action: 'login', username, password });
     if (result.status !== 'success') throw new Error(result.message || 'Incorrect username or password.');
     staffPassword = password;
+    staffUsername = username;
     isStaff = true;
     closeStaffLoginModal();
     updateStaffUI();
@@ -195,6 +200,7 @@ async function submitStaffLogin() {
 function logoutStaff() {
   isStaff = false;
   staffPassword = '';
+  staffUsername = '';
   customersDirectory = [];
   updateStaffUI();
 }
@@ -225,11 +231,17 @@ function updateStaffUI() {
   const logoutButton = document.getElementById('staffLogoutButton');
   const offsetTabButton = document.getElementById('offsetTabButton');
   const documentsTabButton = document.getElementById('documentsTabButton');
+  const productionTabButton = document.getElementById('productionTabButton');
+  const expensesTabButton = document.getElementById('expensesTabButton');
+  const financeTabButton = document.getElementById('financeTabButton');
   const discountRow = document.getElementById('discountRow');
   if (loginButton) loginButton.style.display = isStaff ? 'none' : 'inline-flex';
   if (logoutButton) logoutButton.style.display = isStaff ? 'inline-flex' : 'none';
-  if (offsetTabButton) offsetTabButton.style.display = isStaff ? 'inline-flex' : 'none';
+  if (offsetTabButton) offsetTabButton.style.display = 'none';
   if (documentsTabButton) documentsTabButton.style.display = isStaff ? 'inline-flex' : 'none';
+  if (productionTabButton) productionTabButton.style.display = 'none';
+  if (expensesTabButton) expensesTabButton.style.display = 'none';
+  if (financeTabButton) financeTabButton.style.display = 'none';
   if (discountRow) discountRow.style.display = isStaff ? 'block' : 'none';
   if (!isStaff) document.getElementById('discountInput').value = 0;
   if (rawCatalog.length) {
@@ -237,7 +249,7 @@ function updateStaffUI() {
     displayBooks(query ? catalog.filter(b => `${b.title} ${b.author}`.toLowerCase().includes(query)) : catalog);
   }
   renderCart();
-  if (!isStaff && (activeAppTab === 'offset' || activeAppTab === 'documents')) switchAppTab('mass');
+  if (!isStaff && ['offset', 'documents', 'production', 'expenses', 'finance'].includes(activeAppTab)) switchAppTab('mass');
   syncTopbarHeight();
 }
 
@@ -251,25 +263,36 @@ function switchAppTab(tabName) {
   const massPanel = document.getElementById('massTabPanel');
   const offsetPanel = document.getElementById('offsetTabPanel');
   const documentsPanel = document.getElementById('documentsTabPanel');
+  const productionPanel = document.getElementById('productionTabPanel');
+  const expensesPanel = document.getElementById('expensesTabPanel');
+  const financePanel = document.getElementById('financeTabPanel');
   const catalogueButton = document.getElementById('catalogueTabButton');
   const massButton = document.getElementById('massTabButton');
   const offsetButton = document.getElementById('offsetTabButton');
   const documentsButton = document.getElementById('documentsTabButton');
-  const requestedTab = (tabName === 'offset' || tabName === 'documents') && !isStaff ? 'mass' : tabName;
+  const productionButton = document.getElementById('productionTabButton');
+  const expensesButton = document.getElementById('expensesTabButton');
+  const financeButton = document.getElementById('financeTabButton');
+  const adminTabs = ['offset', 'documents', 'production', 'expenses', 'finance'];
+  const requestedTab = adminTabs.includes(tabName) && !isStaff ? 'mass' : tabName;
   activeAppTab = requestedTab;
-  const panelsByName = { catalogue: cataloguePanel, mass: massPanel, offset: offsetPanel, documents: documentsPanel };
+  const panelsByName = { catalogue: cataloguePanel, mass: massPanel, offset: offsetPanel, documents: documentsPanel, production: productionPanel, expenses: expensesPanel, finance: financePanel };
   const activePanel = panelsByName[requestedTab] || cataloguePanel;
-  [cataloguePanel, massPanel, offsetPanel, documentsPanel].forEach(panel => {
+  [cataloguePanel, massPanel, offsetPanel, documentsPanel, productionPanel, expensesPanel, financePanel].forEach(panel => {
     const isActive = panel === activePanel;
     panel.hidden = !isActive;
     panel.classList.toggle('is-active', isActive);
   });
-  [[catalogueButton, 'catalogue'], [massButton, 'mass'], [offsetButton, 'offset'], [documentsButton, 'documents']].forEach(([button, name]) => {
+  [[catalogueButton, 'catalogue'], [massButton, 'mass'], [offsetButton, 'offset'], [documentsButton, 'documents'], [productionButton, 'production'], [expensesButton, 'expenses'], [financeButton, 'finance']].forEach(([button, name]) => {
+    if (!button) return;
     const isActive = name === requestedTab;
     button.classList.toggle('is-active', isActive);
     button.setAttribute('aria-selected', String(isActive));
   });
   if (requestedTab === 'documents') loadDocumentsTracker();
+  if (requestedTab === 'production') loadProductionQueue();
+  if (requestedTab === 'expenses') loadExpensesTab();
+  if (requestedTab === 'finance') loadFinancials();
 }
 
 function switchMassCalculator(calculatorName) {
@@ -1215,6 +1238,194 @@ async function loadDocumentsTracker() {
   return documentsRequest;
 }
 
+function isProductionBookItem(item) {
+  return Boolean(item && !item.isCharge && (item.mode || item.pages || item.size));
+}
+
+async function loadProductionQueue() {
+  if (!isStaff) return;
+  await loadDocumentsTracker();
+  renderProductionQueue();
+}
+
+function renderProductionQueue() {
+  const body = document.getElementById('productionTableBody');
+  if (!body) return;
+  const productionItems = [];
+  allDocuments.filter(doc => doc.type === 'order' && doc.status === 'IN_PRODUCTION').forEach(order => {
+    (order.items || []).forEach((item, itemIndex) => {
+      if (!isProductionBookItem(item)) return;
+      productionItems.push({ order, item, itemIndex });
+    });
+  });
+  document.getElementById('productionQueueCount').textContent = `${productionItems.length} book line${productionItems.length === 1 ? '' : 's'} to print`;
+  if (!productionItems.length) {
+    body.innerHTML = '<tr><td colspan="7" class="documents-empty">No books are currently in production.</td></tr>';
+    return;
+  }
+  body.innerHTML = productionItems.map(({ order, item, itemIndex }) => `<tr>
+    <td data-label="Order">${escapeHtml(order.reference)}</td>
+    <td data-label="Client">${escapeHtml(order.clientName || 'Valued Client')}</td>
+    <td data-label="Book">${escapeHtml(item.title || item.name || 'Untitled book')}</td>
+    <td data-label="Quantity">${Number(item.quantity || 1)}</td>
+    <td data-label="Specifications">${escapeHtml([item.mode, item.size, item.pages ? `${item.pages} pages` : ''].filter(Boolean).join(' · '))}</td>
+    <td data-label="Print status"><span class="document-status-tag ${item.printed ? 'is-paid' : 'is-pending'}">${item.printed ? 'PRINTED' : 'TO PRINT'}</span></td>
+    <td data-label="Action"><button class="production-print-button" type="button" onclick="markProductionItemPrinted('${escapeHtml(order.reference)}', ${itemIndex})" ${item.printed ? 'disabled' : ''}>${item.printed ? 'Printed' : 'Mark printed'}</button></td>
+  </tr>`).join('');
+}
+
+async function markProductionItemPrinted(orderReference, itemIndex) {
+  try {
+    const result = await postApi({ action: 'mark_order_item_printed', orderReference, itemIndex, staffPassword });
+    if (result.status !== 'success') throw new Error(result.message || 'Could not update print status.');
+    await loadDocumentsTracker();
+    renderProductionQueue();
+    if (result.completed) alert(`All books are printed. Order completed and delivery note ${result.deliveryReference} created.`);
+  } catch (error) {
+    console.error('Production update failed:', error);
+    alert(error.message || 'Could not update the production item. Please refresh and try again.');
+  }
+}
+
+function currentFinanceMonth() {
+  const now = new Date();
+  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+}
+
+async function loadFinancials() {
+  if (!isStaff) return;
+  const monthInput = document.getElementById('financeMonth');
+  if (monthInput && !monthInput.value) monthInput.value = currentFinanceMonth();
+  const dateInput = document.getElementById('expenseDate');
+  if (dateInput && !dateInput.value) {
+    const now = new Date();
+    dateInput.value = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+  }
+  await Promise.all([loadDocumentsTracker(), loadExpenses()]);
+  renderMonthlyFinance();
+}
+
+async function loadExpensesTab() {
+  if (!isStaff) return;
+  await loadExpenses();
+  renderExpensesTable(allExpenses);
+}
+
+async function loadExpenses() {
+  if (!isStaff) return;
+  if (expensesRequest) return expensesRequest;
+  const status = document.getElementById('expenseStatus');
+  if (status) status.textContent = 'Loading expenses...';
+  expensesRequest = (async () => {
+    try {
+      const result = await postApi({ action: 'list_expenses', staffPassword });
+      if (result.status !== 'success') throw new Error(result.message || 'Expenses could not be loaded.');
+      allExpenses = result.data || [];
+      renderMonthlyFinance();
+      if (activeAppTab === 'expenses') renderExpensesTable(allExpenses);
+      if (status) status.textContent = '';
+    } catch (error) {
+      console.error('Expense load failed:', error);
+      if (status) status.textContent = error.message || 'Expenses could not be loaded.';
+    }
+  })().finally(() => { expensesRequest = null; });
+  return expensesRequest;
+}
+
+function renderMonthlyFinance() {
+  const month = document.getElementById('financeMonth')?.value || currentFinanceMonth();
+  const revenueRows = allDocuments.filter(doc => doc.type === 'receipt' && dateToFinanceMonth(doc.timestamp) === month);
+  const expenseRows = allExpenses.filter(expense => String(expense.date || '').slice(0, 7) === month);
+  const income = revenueRows.reduce((sum, receipt) => sum + Number(receipt.total || 0), 0);
+  const expenses = expenseRows.reduce((sum, expense) => sum + Number(expense.amount || 0), 0);
+  const profit = income - expenses;
+  const summary = [
+    { label: 'Payments received', value: `${revenueRows.length} · ${formatKshs(income)}` },
+    { label: 'Expenses recorded', value: `${expenseRows.length} · ${formatKshs(expenses)}` },
+    { label: 'Net cash profit', value: formatKshs(profit), highlight: true }
+  ];
+  document.getElementById('financeSummary').innerHTML = summary.map(card => `<div${card.highlight ? ' class="accounting-highlight"' : ''}><span>${escapeHtml(card.label)}</span><strong>${card.value}</strong></div>`).join('');
+  renderExpensesTable(expenseRows);
+}
+
+function renderExpensesTable(expenses) {
+  const body = document.getElementById('expensesTableBody');
+  if (!body) return;
+  body.innerHTML = expenses.length ? expenses.map(expense => `<tr>
+    <td data-label="Date">${escapeHtml(String(expense.date || '').slice(0, 10))}</td>
+    <td data-label="Category">${escapeHtml(expense.category)}</td>
+    <td data-label="Description">${escapeHtml(expense.description || '')}</td>
+    <td data-label="Amount">${formatKshs(expense.amount)}</td>
+    <td data-label="Recorded by">${escapeHtml(expense.recordedBy || '')}</td>
+  </tr>`).join('') : '<tr><td colspan="5" class="documents-empty">No expenses recorded.</td></tr>';
+}
+
+function dateToFinanceMonth(value) {
+  const date = new Date(value);
+  if (!Number.isFinite(date.getTime())) return String(value || '').slice(0, 7);
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
+}
+
+async function addExpense(event) {
+  event.preventDefault();
+  const button = document.getElementById('addExpenseButton');
+  const status = document.getElementById('expenseStatus');
+  const payload = {
+    action: 'add_expense',
+    date: document.getElementById('expenseDate').value,
+    category: document.getElementById('expenseCategory').value,
+    description: document.getElementById('expenseDescription').value.trim(),
+    amount: Number(document.getElementById('expenseAmount').value),
+    staffPassword,
+    staffUsername
+  };
+  if (!payload.date || !payload.category || !Number.isFinite(payload.amount) || payload.amount <= 0) {
+    status.textContent = 'Enter the date, category, and an amount greater than zero.';
+    return;
+  }
+  button.disabled = true;
+  status.textContent = 'Saving expense...';
+  try {
+    const result = await postApi(payload);
+    if (result.status !== 'success') throw new Error(result.message || 'Expense could not be saved.');
+    allExpenses = result.data || [];
+    document.getElementById('expenseDescription').value = '';
+    document.getElementById('expenseAmount').value = '';
+    status.textContent = 'Expense saved.';
+    renderMonthlyFinance();
+    if (activeAppTab === 'expenses') renderExpensesTable(allExpenses);
+  } catch (error) {
+    console.error('Expense save failed:', error);
+    status.textContent = error.message || 'Expense could not be saved.';
+  } finally {
+    button.disabled = false;
+  }
+}
+
+function downloadMonthlyFinanceReport() {
+  const month = document.getElementById('financeMonth').value || currentFinanceMonth();
+  const receipts = allDocuments.filter(doc => doc.type === 'receipt' && dateToFinanceMonth(doc.timestamp) === month);
+  const expenses = allExpenses.filter(expense => String(expense.date || '').slice(0, 7) === month);
+  const incomeTotal = receipts.reduce((sum, receipt) => sum + Number(receipt.total || 0), 0);
+  const expenseTotal = expenses.reduce((sum, expense) => sum + Number(expense.amount || 0), 0);
+  const rows = [
+    ['Monthly financial summary', month],
+    ['Payments received (Kshs)', incomeTotal],
+    ['Expenses (Kshs)', expenseTotal],
+    ['Net cash profit (Kshs)', incomeTotal - expenseTotal],
+    [],
+    ['Date', 'Type', 'Reference', 'Category', 'Description', 'Income Kshs', 'Expense Kshs']
+  ];
+  receipts.forEach(receipt => rows.push([String(receipt.timestamp || '').slice(0, 10), 'Receipt', receipt.reference, '', receipt.clientName || '', Number(receipt.total || 0), '']));
+  expenses.forEach(expense => rows.push([String(expense.date || '').slice(0, 10), 'Expense', '', expense.category, expense.description || '', '', Number(expense.amount || 0)]));
+  const csv = rows.map(row => row.map(value => `"${String(value).replace(/"/g, '""')}"`).join(',')).join('\r\n');
+  const link = document.createElement('a');
+  link.href = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8' }));
+  link.download = `cavalry-financial-report-${month}.csv`;
+  link.click();
+  URL.revokeObjectURL(link.href);
+}
+
 function formatKshs(value) {
   return `Kshs. ${Number(value || 0).toLocaleString('en-US', { minimumFractionDigits: 2 })}`;
 }
@@ -1277,7 +1488,6 @@ function renderDocumentsTable() {
     const actions = [`<button type="button" onclick="viewDocumentFromList('${doc.type}', '${escapeHtml(doc.reference)}')">View</button>`];
     if (doc.type === 'quotation' && doc.status !== 'CONVERTED') actions.push(`<button type="button" onclick="convertQuoteToInvoiceFromList('${escapeHtml(doc.reference)}')">To invoice</button>`);
     if (doc.type === 'invoice' && doc.status !== 'PAID') actions.push(`<button type="button" onclick="confirmInvoicePaymentFromList('${escapeHtml(doc.reference)}')">Confirm payment</button>`);
-    if (doc.type === 'order' && doc.status !== 'COMPLETED') actions.push(`<button type="button" onclick="completeOrderFromList('${escapeHtml(doc.reference)}')">Mark completed</button>`);
     return `<tr>
       <td data-label="Date">${doc.timestamp ? new Date(doc.timestamp).toLocaleDateString('en-GB') : ''}</td>
       <td data-label="Type"><span class="document-type-tag">${escapeHtml(doc.type)}</span></td>
@@ -1310,17 +1520,6 @@ async function convertQuoteToInvoiceFromList(quotationReference) {
   } catch (error) {
     console.error('Quotation to invoice conversion failed:', error);
     alert(error.message || 'The quotation could not be converted to an invoice. Please try again.');
-  }
-}
-
-async function completeOrderFromList(orderReference) {
-  try {
-    const result = await postApi({ action: 'complete_order', orderReference });
-    if (result.status !== 'success') throw new Error(result.message || 'Order completion failed.');
-    await loadDocumentsTracker();
-  } catch (error) {
-    console.error('Order completion failed:', error);
-    alert(error.message || 'The order could not be marked as completed. Please try again.');
   }
 }
 
@@ -1682,6 +1881,13 @@ Discount: Kshs. ${discount.toLocaleString('en-US', {minimumFractionDigits: 2})}$
 function openCustomModal() {
   const modal = document.getElementById('customModal');
   modal.style.display = 'flex';
+  customBookQuoteDraft = null;
+  document.getElementById('customQuoteResult').hidden = true;
+  document.getElementById('customQuoteStatus').textContent = '';
+  const applyButton = document.getElementById('customApplyChoicesButton');
+  applyButton.textContent = 'Apply choices';
+  applyButton.onclick = applyCustomBookChoices;
+  applyButton.disabled = false;
   document.getElementById('customTitle').focus();
 }
 
@@ -1738,7 +1944,7 @@ async function handlePdfUpload(input) {
   }
 }
 
-function submitCustomBook() {
+async function submitCustomBook() {
   const payload = {
     title: document.getElementById('customTitle').value.trim(),
     author: document.getElementById('customAuthor').value.trim(),
@@ -1747,30 +1953,132 @@ function submitCustomBook() {
     sizeCode: document.getElementById('customSize').value
   };
 
-  if (!payload.title || !payload.pages) {
-    alert("Please enter both Title and Total Pages.");
+  if (!payload.title || !Number.isInteger(payload.pages) || payload.pages < 1 || payload.colorPages > payload.pages) {
+    alert('Enter a title, a valid page count, and colour pages no greater than total pages.');
     return;
   }
 
-  fetch(API_URL, {
-    method: "POST",
-    headers: { "Content-Type": "text/plain;charset=utf-8" },
-    body: JSON.stringify(payload)
-  })
-  .then(res => res.json())
-  .then(res => {
-    if (res.status === "success") {
-      catalog.push(res.book);
-      displayBooks(catalog);
-      addToCart(res.book.id);
-      closeCustomModal();
-    } else if (res.status === "exists") {
-      alert("This book is already in your catalogue! Adding existing title to your quote.");
-      const existing = catalog.find(b => b.title.toLowerCase() === payload.title.toLowerCase());
-      if (existing) addToCart(existing.id);
-      closeCustomModal();
+  const button = document.getElementById('customCalculateButton');
+  const status = document.getElementById('customQuoteStatus');
+  button.disabled = true;
+  button.textContent = 'Calculating...';
+  status.textContent = '';
+  try {
+    const result = await postApi({ action: 'calculate_cost', pages: payload.pages, colorPages: payload.colorPages, sizeCode: payload.sizeCode });
+    const unitCost = Number(result.unitCost ?? result.cost ?? result.data?.unitCost);
+    if (result.status !== 'success' || !Number.isFinite(unitCost)) throw new Error(result.message || 'A valid price was not returned.');
+    customBookQuoteDraft = {
+      ...payload,
+      id: -Date.now(),
+      sizeLabel: SIZE_LABELS[String(payload.sizeCode)] || 'Standard',
+      coverUrl: '',
+      unitCost,
+      calculatedUnitCost: unitCost,
+      activeUnitCost: unitCost,
+      hasSpecialPrice: false
+    };
+    document.getElementById('customQuoteUnitPrice').textContent = formatKshs(unitCost);
+    document.getElementById('customSaveToCatalogue').checked = false;
+    document.getElementById('customAddToQuote').checked = false;
+    document.getElementById('customQuoteResult').hidden = false;
+    status.textContent = 'Choose whether to save this book for future use, add it only to this quote, or both.';
+  } catch (error) {
+    console.error('Custom book price calculation failed:', error);
+    status.textContent = error.message || 'Could not calculate this book. Please try again.';
+  } finally {
+    button.disabled = false;
+    button.textContent = 'Calculate price';
+  }
+}
+
+async function fileToBase64(file) {
+  const buffer = await file.arrayBuffer();
+  const bytes = new Uint8Array(buffer);
+  let binary = '';
+  const chunkSize = 0x8000;
+  for (let index = 0; index < bytes.length; index += chunkSize) {
+    binary += String.fromCharCode(...bytes.subarray(index, index + chunkSize));
+  }
+  return btoa(binary);
+}
+
+async function applyCustomBookChoices() {
+  if (!customBookQuoteDraft) return;
+  const saveToCatalogue = document.getElementById('customSaveToCatalogue').checked;
+  const addToQuote = document.getElementById('customAddToQuote').checked;
+  const status = document.getElementById('customQuoteStatus');
+  const button = document.getElementById('customApplyChoicesButton');
+  const messages = [];
+
+  if (!saveToCatalogue && !addToQuote) {
+    status.textContent = 'Price calculated only. This book was not saved or added to the quote.';
+    return;
+  }
+
+  const draft = customBookQuoteDraft;
+  let bookForQuote = draft;
+  button.disabled = true;
+  status.textContent = 'Applying your choices...';
+
+  if (saveToCatalogue) {
+    const file = document.getElementById('pdfUpload').files[0];
+    if (!file || file.type !== 'application/pdf') {
+      status.textContent = 'Select a PDF before saving this book to the catalogue. You can still add it to the quote by unchecking the save option.';
+      button.disabled = false;
+      return;
     }
-  });
+    if (file.size > 20 * 1024 * 1024) {
+      status.textContent = 'The PDF must be 20 MB or smaller to email. You can still add this title to the quote without saving it.';
+      button.disabled = false;
+      return;
+    }
+
+    try {
+      const result = await postApi({
+        title: draft.title,
+        author: draft.author,
+        pages: draft.pages,
+        colorPages: draft.colorPages,
+        sizeCode: draft.sizeCode,
+        pdfFileName: file.name,
+        pdfBase64: await fileToBase64(file)
+      });
+      if (result.status === 'success') {
+        const existingIndex = catalog.findIndex(book => String(book.title).toLowerCase() === draft.title.toLowerCase());
+        if (existingIndex >= 0) catalog[existingIndex] = result.book;
+        else catalog.push(result.book);
+        rawCatalog = catalog;
+        displayBooks(catalog);
+        bookForQuote = result.book;
+        messages.push(result.emailSent ? 'Saved to catalogue and PDF emailed to cavalrypublishers@gmail.com.' : `Saved to catalogue, but email failed: ${result.emailError || 'Email could not be sent.'}`);
+      } else if (result.status === 'exists') {
+        bookForQuote = catalog.find(book => String(book.title).toLowerCase() === draft.title.toLowerCase()) || draft;
+        messages.push('That title is already in the catalogue; no duplicate was added or emailed.');
+      } else {
+        throw new Error(result.message || 'Could not save this book to the catalogue.');
+      }
+    } catch (error) {
+      messages.push(`Catalogue save failed: ${error.message}`);
+    }
+  }
+
+  if (addToQuote) {
+    if (saveToCatalogue && bookForQuote.id !== draft.id) {
+      addToCart(bookForQuote.id);
+    } else {
+      cart.push({ ...draft, selectedSizeCode: String(draft.sizeCode), productionMode: 'sample', quantity: 1 });
+      renderCart();
+    }
+    messages.push('Added to the current quote.');
+  } else if (!saveToCatalogue) {
+    messages.push('Not saved to catalogue.');
+  }
+
+  status.textContent = messages.join(' ');
+  customBookQuoteDraft = null;
+  button.disabled = false;
+  button.textContent = 'Done';
+  button.onclick = closeCustomModal;
 }
 
 function escapeHtml(str) { return String(str ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;'); }

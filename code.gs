@@ -264,6 +264,37 @@ function listDocumentsFromSheet(ss, sheetName, type) {
   return records;
 }
 
+function isProductionItem(item) {
+  return Boolean(item && !item.isCharge && (item.mode || item.pages || item.size));
+}
+
+function createDeliveryForOrder(ss, orderRecord, orderData) {
+  if (findDocumentByParent(ss, 'deliveries_log', orderData.reference)) return null;
+  orderRecord.sheet.getRange(orderRecord.rowNumber, 11).setValue('COMPLETED');
+  const deliveryReference = createDocumentReference('DN');
+  const deliverySheet = getDocumentSheet(ss, 'deliveries_log');
+  deliverySheet.appendRow(documentRecord(orderData, deliveryReference, orderData.reference, 'ISSUED', orderData.paymentMethod, orderData.paymentReference));
+  return deliveryReference;
+}
+
+function getExpensesSheet(ss) {
+  let sheet = ss.getSheetByName('expenses_log');
+  if (!sheet) {
+    sheet = ss.insertSheet('expenses_log');
+    sheet.appendRow(['Recorded At', 'Expense Date', 'Category', 'Description', 'Amount (Kshs)', 'Recorded By']);
+  }
+  return sheet;
+}
+
+function listExpenses(ss) {
+  const sheet = ss.getSheetByName('expenses_log');
+  if (!sheet || sheet.getLastRow() < 2) return [];
+  return sheet.getRange(2, 1, sheet.getLastRow() - 1, 6).getValues().map(row => ({
+    recordedAt: row[0], date: row[1], category: String(row[2] || ''),
+    description: String(row[3] || ''), amount: Number(row[4] || 0), recordedBy: String(row[5] || '')
+  }));
+}
+
 function getCatalogueCacheKey() {
   return 'quotation_catalogue_v1';
 }
@@ -428,7 +459,7 @@ function doPost(e) {
       const extraCharges = Array.isArray(postData.extraCharges) ? postData.extraCharges : [];
       const extraItems = extraCharges
         .filter(charge => charge && Number(charge.amount) > 0)
-        .map(charge => ({ title: charge.label || 'Additional charge', quantity: 1, unitPrice: Number(charge.amount), total: Number(charge.amount), mode: '', size: '' }));
+        .map(charge => ({ title: charge.label || 'Additional charge', quantity: 1, unitPrice: Number(charge.amount), total: Number(charge.amount), mode: '', size: '', isCharge: true }));
       const items = [...(quoteData.items || []), ...extraItems];
       const extraTotal = extraItems.reduce((sum, item) => sum + item.total, 0);
       const subtotal = Number(quoteData.subtotal || 0) + extraTotal;
@@ -483,8 +514,48 @@ function doPost(e) {
         .setMimeType(ContentService.MimeType.JSON);
     }
 
-    // Order -> Delivery note. Marks production complete and blocks duplicate delivery notes.
+    // Mark an individual production line printed and finish its order when every book line is done.
+    if (postData.action === 'mark_order_item_printed') {
+      if (!isValidStaffPassword(ss, postData.staffPassword)) {
+        return ContentService
+          .createTextOutput(JSON.stringify({ status: 'error', message: 'Staff authorization required.' }))
+          .setMimeType(ContentService.MimeType.JSON);
+      }
+      const order = findDocument(ss, 'orders_log', postData.orderReference);
+      if (!order) throw new Error('Order not found: ' + postData.orderReference);
+      const orderData = documentResponse(order, 'order');
+      if (orderData.status === 'COMPLETED') throw new Error('This order is already completed.');
+      const items = Array.isArray(orderData.items) ? orderData.items : [];
+      const itemIndex = Number(postData.itemIndex);
+      if (!Number.isInteger(itemIndex) || itemIndex < 0 || itemIndex >= items.length || !isProductionItem(items[itemIndex])) {
+        throw new Error('Invalid production item.');
+      }
+      items[itemIndex].printed = true;
+      order.sheet.getRange(order.rowNumber, 6).setValue(JSON.stringify(items));
+      const productionItems = items.filter(isProductionItem);
+      let deliveryReference = '';
+      if (productionItems.length && productionItems.every(item => item.printed === true)) {
+        orderData.items = items;
+        deliveryReference = createDeliveryForOrder(ss, order, orderData) || '';
+      }
+      SpreadsheetApp.flush();
+      return ContentService
+        .createTextOutput(JSON.stringify({
+          status: 'success',
+          completed: orderData.status !== 'COMPLETED' && Boolean(deliveryReference),
+          deliveryReference,
+          data: documentResponse(findDocument(ss, 'orders_log', orderData.reference), 'order')
+        }))
+        .setMimeType(ContentService.MimeType.JSON);
+    }
+
+    // Order -> Delivery note. Manual completion is allowed only after every book line is printed.
     if (postData.action === 'complete_order') {
+      if (!isValidStaffPassword(ss, postData.staffPassword)) {
+        return ContentService
+          .createTextOutput(JSON.stringify({ status: 'error', message: 'Staff authorization required.' }))
+          .setMimeType(ContentService.MimeType.JSON);
+      }
       const order = findDocument(ss, 'orders_log', postData.orderReference);
       if (!order) throw new Error('Order not found: ' + postData.orderReference);
       const orderData = documentResponse(order, 'order');
@@ -494,15 +565,46 @@ function doPost(e) {
       if (findDocumentByParent(ss, 'deliveries_log', orderData.reference)) {
         throw new Error('A delivery note has already been issued for this order.');
       }
-
-      order.sheet.getRange(order.rowNumber, 11).setValue('COMPLETED');
-
-      const deliveryReference = createDocumentReference('DN');
-      const deliverySheet = getDocumentSheet(ss, 'deliveries_log');
-      deliverySheet.appendRow(documentRecord({ ...orderData, items: orderData.items }, deliveryReference, orderData.reference, 'ISSUED', orderData.paymentMethod, orderData.paymentReference));
+      const productionItems = (orderData.items || []).filter(isProductionItem);
+      if (!productionItems.length || !productionItems.every(item => item.printed === true)) {
+        throw new Error('Mark every production item as printed before completing this order.');
+      }
+      const deliveryReference = createDeliveryForOrder(ss, order, orderData);
+      SpreadsheetApp.flush();
 
       return ContentService
         .createTextOutput(JSON.stringify({ status: 'success', documentType: 'delivery', reference: deliveryReference, data: documentResponse(findDocument(ss, 'deliveries_log', deliveryReference), 'delivery') }))
+        .setMimeType(ContentService.MimeType.JSON);
+    }
+
+    if (postData.action === 'list_expenses') {
+      if (!isValidStaffPassword(ss, postData.staffPassword)) {
+        return ContentService
+          .createTextOutput(JSON.stringify({ status: 'error', message: 'Staff authorization required.' }))
+          .setMimeType(ContentService.MimeType.JSON);
+      }
+      return ContentService
+        .createTextOutput(JSON.stringify({ status: 'success', data: listExpenses(ss) }))
+        .setMimeType(ContentService.MimeType.JSON);
+    }
+
+    if (postData.action === 'add_expense') {
+      if (!isValidStaffPassword(ss, postData.staffPassword)) {
+        return ContentService
+          .createTextOutput(JSON.stringify({ status: 'error', message: 'Staff authorization required.' }))
+          .setMimeType(ContentService.MimeType.JSON);
+      }
+      const expenseDate = String(postData.date || '').trim();
+      const category = String(postData.category || '').trim();
+      const description = String(postData.description || '').trim();
+      const amount = Number(postData.amount);
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(expenseDate) || !category || !Number.isFinite(amount) || amount <= 0) {
+        throw new Error('Enter a valid expense date, category, and amount greater than zero.');
+      }
+      getExpensesSheet(ss).appendRow([new Date(), expenseDate, category, description, amount, String(postData.staffUsername || 'Staff').trim()]);
+      SpreadsheetApp.flush();
+      return ContentService
+        .createTextOutput(JSON.stringify({ status: 'success', data: listExpenses(ss) }))
         .setMimeType(ContentService.MimeType.JSON);
     }
 
@@ -600,10 +702,39 @@ function doPost(e) {
       }
     }
 
+    const pdfBase64 = String(postData.pdfBase64 || '');
+    if (!pdfBase64) {
+      return ContentService
+        .createTextOutput(JSON.stringify({ status: 'error', message: 'A PDF copy is required when saving a custom book to the catalogue.' }))
+        .setMimeType(ContentService.MimeType.JSON);
+    }
+    if (pdfBase64.length > 28 * 1024 * 1024) {
+      return ContentService
+        .createTextOutput(JSON.stringify({ status: 'error', message: 'The PDF is too large to email. Maximum size is 20 MB.' }))
+        .setMimeType(ContentService.MimeType.JSON);
+    }
+
     const params = getParametersFromSheet(ss);
     const unitCost = computeUnitCost(pages, colorPages, sizeCode, params);
     booksSheet.appendRow([title, author, pages, colorPages, sizeCode, unitCost, '']);
     clearCatalogueCache();
+
+    let emailSent = false;
+    let emailError = '';
+    try {
+      const fileName = String(postData.pdfFileName || `${title}.pdf`).replace(/[\\/:*?"<>|]/g, '_');
+      const attachment = Utilities.newBlob(Utilities.base64Decode(pdfBase64), 'application/pdf', fileName);
+      MailApp.sendEmail({
+        to: 'cavalrypublishers@gmail.com',
+        subject: `New catalogue book: ${title}`,
+        body: `A new book was added to the Cavalry Publishers catalogue.\n\nTitle: ${title}\nAuthor: ${author || 'Not provided'}\nPages: ${pages}\nSize code: ${sizeCode}\nCalculated price: Kshs. ${unitCost}\n\nThe uploaded PDF is attached.`,
+        attachments: [attachment]
+      });
+      emailSent = true;
+    } catch (error) {
+      emailError = error.message || String(error);
+      console.error('Catalogue PDF email failed:', emailError);
+    }
 
     const codeKey = sizeCode.charAt(0);
     const sizeLabel = (params.rules[codeKey] && params.rules[codeKey].label) 
@@ -623,7 +754,9 @@ function doPost(e) {
           sizeLabel: sizeLabel,
           coverUrl: '',
           unitCost: unitCost
-        }
+        },
+        emailSent: emailSent,
+        emailError: emailError
       }))
       .setMimeType(ContentService.MimeType.JSON);
 
