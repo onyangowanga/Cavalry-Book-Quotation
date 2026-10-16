@@ -73,7 +73,9 @@ h1 { font-weight: 700; font-size: clamp(1.8rem, 3vw, 2.45rem); line-height: 1.04
 .admin-dashboard-records-heading h3 { font-size: 1rem; }
 .admin-dashboard-records-heading span { color: var(--muted); font-size: .76rem; }
 .job-quote-client-fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; margin: 14px 0 22px; }
-.job-quote-client-fields input, .job-quote-line input:not([type="checkbox"]) { width: 100%; min-width: 0; padding: 10px 11px; border: 1px solid var(--line); border-radius: 8px; background: #fff; color: var(--ink); }
+.job-quote-client-fields input, .job-quote-line input:not([type="checkbox"]), .job-quote-discount input { width: 100%; min-width: 0; padding: 10px 11px; border: 1px solid var(--line); border-radius: 8px; background: #fff; color: var(--ink); }
+.job-quote-discount { display: grid; grid-template-columns: minmax(140px, 240px); gap: 5px; margin-top: 16px; }
+.job-quote-discount[hidden] { display: none; }
 .job-quote-lines-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 10px; }
 .job-quote-lines-heading h3 { font-size: 1rem; }
 .job-quote-lines { display: grid; }
@@ -86,6 +88,7 @@ h1 { font-weight: 700; font-size: clamp(1.8rem, 3vw, 2.45rem); line-height: 1.04
 .job-quote-total { display: flex; align-items: baseline; justify-content: flex-end; gap: 18px; margin-top: 16px; padding: 14px; border-radius: 8px; background: #f7f3ef; }
 .job-quote-total span { color: var(--muted); font-size: .8rem; font-weight: 700; }
 .job-quote-total strong { color: var(--red); font-size: 1.15rem; }
+.job-quote-form-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 14px; }
 .accounting-summary { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; margin: 18px 0; }
 .accounting-summary > div { padding: 15px 16px; border: 1px solid var(--line); border-radius: 12px; background: #fff; }
 .accounting-summary span { display: block; color: var(--muted); font-size: .68rem; font-weight: 800; text-transform: uppercase; letter-spacing: .04em; }
@@ -408,6 +411,7 @@ h1 { font-weight: 700; font-size: clamp(1.8rem, 3vw, 2.45rem); line-height: 1.04
   .offset-panel { padding: 13px; border-radius: 16px; }
   .documents-panel { padding: 13px; border-radius: 16px; }
   .job-quote-client-fields { grid-template-columns: 1fr; }
+  .job-quote-discount { grid-template-columns: 1fr; }
   .job-quote-line { grid-template-columns: minmax(0, 1fr) 36px; }
   .job-quote-description { grid-column: 1 / -1; }
   .job-quote-line label:not(.job-quote-description) { grid-column: 1 / 2; }

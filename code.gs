@@ -445,6 +445,80 @@ function doPost(e) {
         .setMimeType(ContentService.MimeType.JSON);
     }
 
+    if (postData.action === 'update_document') {
+      if (!isValidStaffPassword(ss, postData.staffPassword)) {
+        return ContentService
+          .createTextOutput(JSON.stringify({ status: 'error', message: 'Staff authorization required.' }))
+          .setMimeType(ContentService.MimeType.JSON);
+      }
+      const type = String(postData.documentType || '');
+      const isQuotation = type === 'quotation';
+      const sheetName = isQuotation ? 'quotes_log' : type === 'invoice' ? 'invoices_log' : '';
+      if (!sheetName) throw new Error('Only quotations and invoices can be edited.');
+      const record = findDocument(ss, sheetName, postData.reference);
+      if (!record) throw new Error(`${type} not found: ${postData.reference}`);
+      const existing = documentResponse(record, type);
+      if (isQuotation) {
+        if (existing.status !== 'ACTIVE' || findDocumentByParent(ss, 'invoices_log', existing.reference)) {
+          throw new Error('Only unconverted quotations can be edited.');
+        }
+      } else if (existing.status !== 'PENDING' || findDocumentByParent(ss, 'receipts_log', existing.reference)) {
+        throw new Error('Only unpaid invoices can be edited.');
+      }
+
+      if (!Array.isArray(postData.items) || !postData.items.length) throw new Error('Add at least one line item.');
+      const items = postData.items.map(item => {
+        const title = String(item.title || '').trim();
+        const quantity = Number(item.quantity);
+        const unitPrice = Number(item.unitPrice);
+        if (!title || !Number.isInteger(quantity) || quantity < 1 || !Number.isFinite(unitPrice) || unitPrice < 0) {
+          throw new Error('Each item needs a description, a positive whole-number quantity, and a valid unit price.');
+        }
+        return { ...item, title, quantity, unitPrice, total: quantity * unitPrice };
+      });
+      const subtotal = items.reduce((sum, item) => sum + item.total, 0);
+      const discount = Math.max(0, Number(postData.discount || 0));
+      if (!Number.isFinite(discount) || discount > subtotal) throw new Error('Discount cannot exceed the item subtotal.');
+      const total = subtotal - discount;
+      const clientName = String(postData.clientName || '').trim();
+      const clientPhone = String(postData.clientPhone || '').trim();
+      if (!clientName) throw new Error('Client name is required.');
+
+      if (isQuotation && record.isLegacyQuote) {
+        record.sheet.getRange(record.rowNumber, 1, 1, 13).setValues([documentRecord({
+          clientName, clientPhone, items, subtotal, discount, total, taxBreakdown: existing.taxBreakdown
+        }, existing.reference, '', 'ACTIVE', '', '')]);
+      } else {
+        record.sheet.getRange(record.rowNumber, 4, 1, 6).setValues([
+          [clientName, clientPhone, JSON.stringify(items), subtotal, discount, total]
+        ]);
+      }
+      upsertCustomer(ss, clientName, clientPhone);
+      SpreadsheetApp.flush();
+      return ContentService
+        .createTextOutput(JSON.stringify({ status: 'success', data: documentResponse(findDocument(ss, sheetName, existing.reference), type) }))
+        .setMimeType(ContentService.MimeType.JSON);
+    }
+
+    if (postData.action === 'delete_quotation') {
+      if (!isValidStaffPassword(ss, postData.staffPassword)) {
+        return ContentService
+          .createTextOutput(JSON.stringify({ status: 'error', message: 'Staff authorization required.' }))
+          .setMimeType(ContentService.MimeType.JSON);
+      }
+      const quote = findDocument(ss, 'quotes_log', postData.reference);
+      if (!quote) throw new Error('Quotation not found: ' + postData.reference);
+      const quoteData = documentResponse(quote, 'quotation');
+      if (quoteData.status !== 'ACTIVE' || findDocumentByParent(ss, 'invoices_log', quoteData.reference)) {
+        throw new Error('Only unconverted quotations can be deleted.');
+      }
+      quote.sheet.deleteRow(quote.rowNumber);
+      SpreadsheetApp.flush();
+      return ContentService
+        .createTextOutput(JSON.stringify({ status: 'success', reference: quoteData.reference }))
+        .setMimeType(ContentService.MimeType.JSON);
+    }
+
     // Quotation -> Invoice. Adds optional extra charges (e.g. delivery) and blocks duplicate conversion.
     if (postData.action === 'convert_quote_to_invoice') {
       const quote = findDocument(ss, 'quotes_log', postData.quotationReference);

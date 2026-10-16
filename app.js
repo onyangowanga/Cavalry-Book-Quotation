@@ -66,6 +66,7 @@ let documentsRequest = null;
 let customBookQuoteDraft = null;
 let allExpenses = [];
 let expensesRequest = null;
+let editingDocument = null;
 
 const OFFSET_PAPER_COSTS = {
   'Bond 70': 1100,
@@ -235,6 +236,7 @@ function updateStaffUI() {
   const expensesTabButton = document.getElementById('expensesTabButton');
   const financeTabButton = document.getElementById('financeTabButton');
   const discountRow = document.getElementById('discountRow');
+  if (!isStaff && editingDocument) cancelJobQuoteEdit();
   if (loginButton) loginButton.style.display = isStaff ? 'none' : 'inline-flex';
   if (logoutButton) logoutButton.style.display = isStaff ? 'inline-flex' : 'none';
   if (offsetTabButton) offsetTabButton.style.display = 'none';
@@ -297,14 +299,23 @@ function switchAppTab(tabName) {
   if (requestedTab === 'finance') loadFinancials();
 }
 
-function addJobQuoteLine() {
-  document.getElementById('jobQuoteLines').insertAdjacentHTML('beforeend', `<div class="job-quote-line">
+function addJobQuoteLine(originalItem = null) {
+  const lines = document.getElementById('jobQuoteLines');
+  lines.insertAdjacentHTML('beforeend', `<div class="job-quote-line">
     <label class="job-quote-description"><span class="field-label">Description</span><input type="text" data-job-description placeholder="e.g. Graphic design service" maxlength="140" oninput="updateJobQuoteTotal()"></label>
     <label><span class="field-label">Quantity</span><input type="number" data-job-quantity min="1" step="1" value="1" oninput="updateJobQuoteTotal()"></label>
     <label><span class="field-label">Unit price (Kshs)</span><input type="number" data-job-price min="0.01" step="0.01" placeholder="0.00" oninput="updateJobQuoteTotal()"></label>
     <label class="job-quote-production"><input type="checkbox" data-job-production><span>Requires production</span></label>
     <button class="job-quote-remove" type="button" onclick="removeJobQuoteLine(this)" aria-label="Remove quotation item" title="Remove item">×</button>
   </div>`);
+  const lastLine = lines.lastElementChild;
+  if (originalItem) {
+    lastLine.dataset.itemMetadata = JSON.stringify(originalItem);
+    lastLine.querySelector('[data-job-description]').value = originalItem.title || originalItem.name || '';
+    lastLine.querySelector('[data-job-quantity]').value = Number(originalItem.quantity || 1);
+    lastLine.querySelector('[data-job-price]').value = Number(originalItem.unitPrice || 0);
+    lastLine.querySelector('[data-job-production]').checked = isProductionBookItem(originalItem);
+  }
 }
 
 function removeJobQuoteLine(button) {
@@ -314,6 +325,7 @@ function removeJobQuoteLine(button) {
     rows[0].querySelector('[data-job-quantity]').value = '1';
     rows[0].querySelector('[data-job-price]').value = '';
     rows[0].querySelector('[data-job-production]').checked = false;
+    delete rows[0].dataset.itemMetadata;
   } else {
     button.closest('.job-quote-line').remove();
   }
@@ -322,23 +334,28 @@ function removeJobQuoteLine(button) {
 
 function getJobQuoteItems() {
   return [...document.querySelectorAll('.job-quote-line')].map(row => {
+    let metadata = {};
+    try { metadata = JSON.parse(row.dataset.itemMetadata || '{}'); } catch (error) { metadata = {}; }
     const title = row.querySelector('[data-job-description]').value.trim();
     const quantity = Number(row.querySelector('[data-job-quantity]').value);
     const unitPrice = Number(row.querySelector('[data-job-price]').value);
     return {
+      ...metadata,
       title,
       quantity,
       unitPrice,
       total: quantity * unitPrice,
-      mode: '',
-      size: '',
+      mode: metadata.mode || '',
+      size: metadata.size || '',
       requiresProduction: row.querySelector('[data-job-production]').checked
     };
   });
 }
 
 function updateJobQuoteTotal() {
-  const total = getJobQuoteItems().reduce((sum, item) => sum + (Number.isFinite(item.total) ? item.total : 0), 0);
+  const subtotal = getJobQuoteItems().reduce((sum, item) => sum + (Number.isFinite(item.total) ? item.total : 0), 0);
+  const discount = editingDocument ? Math.max(0, Number(document.getElementById('jobQuoteDiscount').value) || 0) : 0;
+  const total = Math.max(0, subtotal - discount);
   document.getElementById('jobQuoteTotal').textContent = formatKshs(total);
 }
 
@@ -348,6 +365,7 @@ async function createJobQuotation() {
   const clientPhone = document.getElementById('jobQuoteClientPhone').value.trim();
   const items = getJobQuoteItems();
   const status = document.getElementById('jobQuoteStatus');
+  const wasEditing = Boolean(editingDocument);
   if (!clientName) {
     status.textContent = 'Enter the client name.';
     return;
@@ -356,34 +374,114 @@ async function createJobQuotation() {
     status.textContent = 'Each item needs a description, positive whole-number quantity, and unit price greater than zero.';
     return;
   }
-  const total = items.reduce((sum, item) => sum + item.total, 0);
+  const subtotal = items.reduce((sum, item) => sum + item.total, 0);
+  const discount = wasEditing ? Math.max(0, Number(document.getElementById('jobQuoteDiscount').value) || 0) : 0;
+  if (discount > subtotal) {
+    status.textContent = 'Discount cannot exceed the item subtotal.';
+    return;
+  }
+  const total = subtotal - discount;
   const button = document.getElementById('createJobQuoteButton');
   button.disabled = true;
-  status.textContent = 'Creating quotation...';
+  status.textContent = wasEditing ? 'Saving document changes...' : 'Creating quotation...';
   try {
-    const result = await postApi({
-      action: 'log_quote',
+    const payload = {
       clientName,
       clientPhone,
       items,
       itemsSummary: items.map(item => `${item.quantity}x ${item.title}`).join('; '),
-      subtotal: total,
-      discount: 0,
+      subtotal,
+      discount,
       total,
-      taxBreakdown: 'OTHER_JOB'
-    });
-    if (result.status !== 'success') throw new Error(result.message || 'Quotation could not be created.');
-    currentDocument = { type: 'quotation', timestamp: new Date().toISOString(), reference: result.reference, clientName, clientPhone, items, subtotal: total, discount: 0, total, taxBreakdown: 'OTHER_JOB', status: 'ACTIVE' };
-    currentQuotationReference = result.reference;
-    currentDocument.reference = result.reference;
+      taxBreakdown: wasEditing ? editingDocument.taxBreakdown : 'OTHER_JOB'
+    };
+    const result = await postApi(wasEditing
+      ? { ...payload, action: 'update_document', documentType: editingDocument.type, reference: editingDocument.reference, staffPassword }
+      : { ...payload, action: 'log_quote' });
+    if (result.status !== 'success') throw new Error(result.message || (wasEditing ? 'Document could not be updated.' : 'Quotation could not be created.'));
+    if (wasEditing) {
+      currentDocument = result.data;
+      status.textContent = `${editingDocument.type === 'invoice' ? 'Invoice' : 'Quotation'} ${editingDocument.reference} updated.`;
+    } else {
+      currentDocument = { type: 'quotation', timestamp: new Date().toISOString(), reference: result.reference, clientName, clientPhone, items, subtotal, discount, total, taxBreakdown: 'OTHER_JOB', status: 'ACTIVE' };
+      status.textContent = `Quotation ${result.reference} created. Convert it to an invoice from its preview when ready.`;
+    }
+    if (currentDocument.type === 'quotation') currentQuotationReference = currentDocument.reference;
+    editingDocument = null;
+    document.getElementById('jobQuoteHeading').textContent = 'Create a quotation';
+    document.getElementById('jobQuoteDiscountRow').hidden = true;
+    document.getElementById('cancelJobQuoteEditButton').hidden = true;
+    button.textContent = 'Create quotation';
     await loadDocumentsTracker();
-    status.textContent = `Quotation ${result.reference} created. Convert it to an invoice from its preview when ready.`;
     openDocumentPreview();
   } catch (error) {
-    console.error('Other-job quotation failed:', error);
-    status.textContent = error.message || 'Quotation could not be created. Please try again.';
+    console.error(wasEditing ? 'Document edit failed:' : 'Other-job quotation failed:', error);
+    status.textContent = error.message || (wasEditing ? 'Document could not be updated. Please try again.' : 'Quotation could not be created. Please try again.');
   } finally {
     button.disabled = false;
+  }
+}
+
+function editDocumentFromList(type, reference) {
+  if (!isStaff || !['quotation', 'invoice'].includes(type)) return;
+  const doc = allDocuments.find(entry => entry.type === type && entry.reference === reference);
+  if (!doc) return;
+  if ((type === 'quotation' && doc.status !== 'ACTIVE') || (type === 'invoice' && doc.status !== 'PENDING')) {
+    alert('Only unconverted quotations and unpaid invoices can be edited.');
+    return;
+  }
+  let items = Array.isArray(doc.items) ? doc.items : [];
+  if (!items.length) {
+    const summary = String(doc.itemsSummary || '').trim();
+    const amount = Number(doc.subtotal || doc.total || 0);
+    items = [{ title: summary || 'Quoted items', quantity: 1, unitPrice: amount, total: amount, mode: '', size: '', requiresProduction: false }];
+  }
+  editingDocument = { ...doc, type, reference, items };
+  document.getElementById('jobQuoteHeading').textContent = `Edit ${type} ${reference}`;
+  document.getElementById('jobQuoteClientName').value = doc.clientName || '';
+  document.getElementById('jobQuoteClientPhone').value = doc.clientPhone || '';
+  document.getElementById('jobQuoteDiscount').value = Number(doc.discount || 0);
+  document.getElementById('jobQuoteDiscountRow').hidden = false;
+  document.getElementById('jobQuoteStatus').textContent = `Editing ${type} ${reference}. Saving keeps its existing reference.`;
+  document.getElementById('createJobQuoteButton').textContent = `Save ${type}`;
+  document.getElementById('cancelJobQuoteEditButton').hidden = false;
+  const lines = document.getElementById('jobQuoteLines');
+  lines.innerHTML = '';
+  items.forEach(item => addJobQuoteLine(item));
+  updateJobQuoteTotal();
+  switchAppTab('jobquote');
+}
+
+function cancelJobQuoteEdit() {
+  editingDocument = null;
+  document.getElementById('jobQuoteHeading').textContent = 'Create a quotation';
+  document.getElementById('jobQuoteClientName').value = '';
+  document.getElementById('jobQuoteClientPhone').value = '';
+  document.getElementById('jobQuoteDiscount').value = '0';
+  document.getElementById('jobQuoteDiscountRow').hidden = true;
+  document.getElementById('jobQuoteStatus').textContent = '';
+  document.getElementById('jobQuoteLines').innerHTML = '';
+  addJobQuoteLine();
+  const button = document.getElementById('createJobQuoteButton');
+  button.textContent = 'Create quotation';
+  document.getElementById('cancelJobQuoteEditButton').hidden = true;
+  updateJobQuoteTotal();
+}
+
+async function deleteQuotationFromList(reference) {
+  if (!isStaff || !confirm(`Delete unconverted quotation ${reference}? This cannot be undone.`)) return;
+  try {
+    const result = await postApi({ action: 'delete_quotation', reference, staffPassword });
+    if (result.status !== 'success') throw new Error(result.message || 'Quotation could not be deleted.');
+    if (currentDocument && currentDocument.type === 'quotation' && currentDocument.reference === reference) {
+      currentDocument = null;
+      currentQuotationReference = '';
+      closeDocumentPreview();
+    }
+    await loadDocumentsTracker();
+  } catch (error) {
+    console.error('Quotation deletion failed:', error);
+    alert(error.message || 'Quotation could not be deleted. Please refresh and try again.');
   }
 }
 
@@ -1588,8 +1686,15 @@ function renderDocumentsTable() {
 
   tableBody.innerHTML = filtered.map(doc => {
     const actions = [`<button type="button" onclick="viewDocumentFromList('${doc.type}', '${escapeHtml(doc.reference)}')">View</button>`];
-    if (doc.type === 'quotation' && doc.status !== 'CONVERTED') actions.push(`<button type="button" onclick="convertQuoteToInvoiceFromList('${escapeHtml(doc.reference)}')">To invoice</button>`);
-    if (doc.type === 'invoice' && doc.status !== 'PAID') actions.push(`<button type="button" onclick="confirmInvoicePaymentFromList('${escapeHtml(doc.reference)}')">Confirm payment</button>`);
+    if (doc.type === 'quotation' && doc.status === 'ACTIVE') {
+      actions.push(`<button type="button" onclick="convertQuoteToInvoiceFromList('${escapeHtml(doc.reference)}')">To invoice</button>`);
+      actions.push(`<button type="button" onclick="editDocumentFromList('quotation', '${escapeHtml(doc.reference)}')">Edit</button>`);
+      actions.push(`<button type="button" onclick="deleteQuotationFromList('${escapeHtml(doc.reference)}')">Delete</button>`);
+    }
+    if (doc.type === 'invoice' && doc.status === 'PENDING') {
+      actions.push(`<button type="button" onclick="confirmInvoicePaymentFromList('${escapeHtml(doc.reference)}')">Confirm payment</button>`);
+      actions.push(`<button type="button" onclick="editDocumentFromList('invoice', '${escapeHtml(doc.reference)}')">Edit</button>`);
+    }
     return `<tr>
       <td data-label="Date">${doc.timestamp ? new Date(doc.timestamp).toLocaleDateString('en-GB') : ''}</td>
       <td data-label="Type"><span class="document-type-tag">${escapeHtml(doc.type)}</span></td>
@@ -1680,6 +1785,7 @@ async function shareDocumentViaWhatsApp() {
   if (!currentDocument) return;
   const type = String(currentDocument.type || 'document').toLowerCase();
   const status = String(currentDocument.status || 'PENDING').toUpperCase();
+  const isCompletedOrder = type === 'delivery' || (type === 'order' && status === 'COMPLETED');
   const requiresProduction = (currentDocument.items || []).some(isProductionBookItem);
   const items = (currentDocument.items || []).map((item, index) => `${index + 1}. ${item.quantity} x ${item.title} - Kshs. ${Number(item.total || 0).toFixed(2)}`).join('\n');
   let note = '';
@@ -1688,7 +1794,9 @@ async function shareDocumentViaWhatsApp() {
   } else if (type === 'receipt') {
     note = requiresProduction ? `\n\nPayment received. Your order has been placed and production begins.\nDelivery within 2 working days.` : '\n\nPayment received. Thank you for your business.';
   }
-  const message = `*CAVALRY PUBLISHERS ${type.toUpperCase()}*\nReference: ${currentDocument.reference}\nStatus: ${status}\nClient: ${currentDocument.clientName || 'Valued Client'}\n\n${items}\n\n*TOTAL: Kshs. ${Number(currentDocument.total || 0).toLocaleString('en-US', { minimumFractionDigits: 2 })}*${note}`;
+  const message = isCompletedOrder
+    ? 'Your order is complete and ready for collection, It was a pleasure doing business with you..'
+    : `*CAVALRY PUBLISHERS ${type.toUpperCase()}*\nReference: ${currentDocument.reference}\nStatus: ${status}\nClient: ${currentDocument.clientName || 'Valued Client'}\n\n${items}\n\n*TOTAL: Kshs. ${Number(currentDocument.total || 0).toLocaleString('en-US', { minimumFractionDigits: 2 })}*${note}`;
 
   try {
     const canvas = await html2canvas(document.getElementById('documentRenderSurface'), { backgroundColor: '#ffffff', scale: 2, useCORS: true });
@@ -1707,7 +1815,8 @@ async function shareDocumentViaWhatsApp() {
     link.download = fileName;
     link.href = URL.createObjectURL(blob);
     link.click();
-    window.open(`https://wa.me/${COMPANY_WHATSAPP}?text=${encodeURIComponent(`${message}\n\n(Please attach the image just downloaded: ${fileName})`)}`, '_blank');
+    const fallbackMessage = isCompletedOrder ? message : `${message}\n\n(Please attach the image just downloaded: ${fileName})`;
+    window.open(`https://wa.me/${COMPANY_WHATSAPP}?text=${encodeURIComponent(fallbackMessage)}`, '_blank');
   } catch (error) {
     if (error.name === 'AbortError') return;
     console.error('WhatsApp share failed:', error);

@@ -181,7 +181,7 @@
       <div class="offset-heading">
         <div>
           <div class="eyebrow">Admin · Other work</div>
-          <h2>Create a quotation</h2>
+          <h2 id="jobQuoteHeading">Create a quotation</h2>
           <p>Quote any service or job, then convert the quotation to an invoice and record payment as a receipt.</p>
         </div>
         <button class="refresh-btn" type="button" onclick="switchAppTab('documents')">Admin dashboard</button>
@@ -200,9 +200,13 @@
           <button class="job-quote-remove" type="button" onclick="removeJobQuoteLine(this)" aria-label="Remove quotation item" title="Remove item">×</button>
         </div>
       </div>
+      <label id="jobQuoteDiscountRow" class="job-quote-discount" hidden><span class="field-label">Discount (Kshs)</span><input id="jobQuoteDiscount" type="number" min="0" step="0.01" value="0" oninput="updateJobQuoteTotal()"></label>
       <div class="job-quote-total"><span>Quotation total</span><strong id="jobQuoteTotal">Kshs. 0.00</strong></div>
       <p id="jobQuoteStatus" class="checkout-status" role="status" aria-live="polite"></p>
-      <button id="createJobQuoteButton" class="custom-btn" type="button" onclick="createJobQuotation()">Create quotation</button>
+      <div class="job-quote-form-actions">
+        <button id="cancelJobQuoteEditButton" class="continue-btn" type="button" onclick="cancelJobQuoteEdit()" hidden>Cancel editing</button>
+        <button id="createJobQuoteButton" class="custom-btn" type="button" onclick="createJobQuotation()">Create quotation</button>
+      </div>
     </section>
 
     <section id="documentsTabPanel" class="tab-panel documents-panel" role="tabpanel" aria-labelledby="documentsTabButton" hidden>
