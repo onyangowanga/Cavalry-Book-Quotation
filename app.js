@@ -962,7 +962,9 @@ function displayBooks(books) {
   document.getElementById('catalogCount').textContent = `${books.length} title${books.length === 1 ? '' : 's'}`;
   if (!books.length) { grid.innerHTML = '<div class="loading">No books match your search.</div>'; return; }
   
-  grid.innerHTML = books.map(book => `
+  grid.innerHTML = books.map(book => {
+    const sizeName = (SIZE_LABELS[String(book.sizeCode)] || book.sizeLabel || 'Standard Size').replace(/\s+size$/i, '');
+    return `
     <article class="book-card" tabindex="0" role="button" onclick="openBookDetails(${book.id})" onkeydown="if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); openBookDetails(${book.id}); }">
       <div>
         ${book.coverUrl 
@@ -970,10 +972,7 @@ function displayBooks(books) {
           : createPlaceholderMarkup(book.title)}
         <div class="book-title">${escapeHtml(book.title)}</div>
         <div class="book-author">${escapeHtml(book.author)}</div>
-        <div class="book-meta">
-          <span>${book.pages} pgs</span>
-          <span>${escapeHtml(SIZE_LABELS[String(book.sizeCode)] || book.sizeLabel)}</span>
-        </div>
+        <div class="book-meta"><span>Pages: ${Number(book.pages) || 0}</span><span>Book Size: ${escapeHtml(sizeName)}</span></div>
       </div>
       <div class="book-footer">
         <div class="price-row">
@@ -984,7 +983,8 @@ function displayBooks(books) {
         <button class="add-btn" onclick="event.stopPropagation(); addToCart(${book.id})">Add to quote</button>
       </div>
     </article>
-  `).join('');
+  `;
+  }).join('');
 }
 
 function setCatalogueView(view) {
