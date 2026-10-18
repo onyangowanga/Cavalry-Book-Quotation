@@ -8,7 +8,7 @@
   <link rel="icon" type="image/png" sizes="96x96" href="favicon/favicon-96x96.png">
   <link rel="icon" href="favicon/favicon.ico">
   <link rel="apple-touch-icon" sizes="180x180" href="favicon/apple-touch-icon.png">
-  <link rel="manifest" href="favicon/site.webmanifest">
+  <link rel="manifest" href="manifest.json">
   <title>Cavalry Publishers | Quote Builder</title>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.16.105/pdf.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
@@ -32,6 +32,8 @@
         <p>Find your book, and get an instant quote on WhatsApp</p>
         <button class="refresh-btn" id="staffLoginButton" onclick="openStaffLoginModal()" aria-label="Admin login"><span aria-hidden="true">🔒</span><span>Admin login</span></button>
         <button class="refresh-btn" id="staffLogoutButton" onclick="logoutStaff()" style="display:none;" aria-label="Log out of staff mode"><span aria-hidden="true">🔓</span><span>Admin mode · Log out</span></button>
+        <button class="refresh-btn" id="installAppButton" type="button" onclick="installPWA()" hidden aria-label="Install Cavalry Publishers Quote Builder"><span aria-hidden="true">⬇</span><span>Install app</span></button>
+        <span id="installAppStatus" class="install-app-status" role="status" aria-live="polite"></span>
       </div>
     </header>
 
@@ -282,11 +284,18 @@
         </div>
         <div class="documents-refresh-group">
           <button class="refresh-btn" type="button" onclick="switchAppTab('documents')">Admin dashboard</button>
-          <label class="finance-month-field"><span class="field-label">Report month</span><input id="financeMonth" type="month" onchange="renderMonthlyFinance()"></label>
+          <label class="finance-month-field"><span class="field-label">Report period</span><select id="financePeriod" onchange="updateFinancePeriodControls()"><option value="monthly">Monthly</option><option value="yearly">Yearly</option><option value="cumulative">Cumulative</option><option value="custom">Custom range</option></select></label>
+          <label id="financeMonthControl" class="finance-month-field"><span class="field-label">Month</span><input id="financeMonth" type="month" onchange="renderMonthlyFinance()"></label>
+          <label id="financeYearControl" class="finance-month-field" hidden><span class="field-label">Year</span><input id="financeYear" type="number" min="2000" max="9999" step="1" onchange="renderMonthlyFinance()"></label>
+          <div id="financeCustomRange" class="finance-custom-range" hidden>
+            <label class="finance-month-field"><span class="field-label">Start date</span><input id="financeStartDate" type="date" onchange="renderMonthlyFinance()"></label>
+            <label class="finance-month-field"><span class="field-label">End date</span><input id="financeEndDate" type="date" onchange="renderMonthlyFinance()"></label>
+          </div>
           <button class="refresh-btn" type="button" onclick="loadFinancials()">Refresh report</button>
           <button class="refresh-btn" type="button" onclick="downloadMonthlyFinanceReport()">Download CSV</button>
         </div>
       </div>
+      <p id="financePeriodStatus" class="finance-period-status" role="status" aria-live="polite"></p>
       <div id="financeSummary" class="accounting-summary"></div>
     </section>
 
@@ -356,6 +365,7 @@
         <label><span class="field-label">Phone number</span><input id="invoiceClientPhone" type="tel" placeholder="e.g. 0712 345 678"></label>
       </div>
       <div id="invoiceSummary" class="checkout-summary"></div>
+      <label id="invoiceStartProductionRow" class="job-quote-production invoice-start-production" hidden><input id="invoiceStartProduction" type="checkbox"><span>Start production before payment (trusted client)</span></label>
       <div class="invoice-charges">
         <label><span class="field-label">Delivery / shipping cost (Kshs)</span><input id="invoiceDeliveryCost" type="number" min="0" placeholder="0" oninput="updateInvoicePreviewTotal()"></label>
         <label><span class="field-label">Other charge label</span><input id="invoiceOtherChargeLabel" type="text" placeholder="e.g. Design fee"></label>
@@ -380,7 +390,9 @@
         <button class="modal-close-button" aria-label="Close payment dialog" onclick="closePaymentModal()">&times;</button>
       </div>
       <div class="checkout-reference-row"><span>Invoice reference</span><strong id="paymentInvoiceReference"></strong></div>
-      <div class="checkout-total-row"><span>Amount due</span><strong id="paymentAmountDue">Kshs. 0.00</strong></div>
+      <div class="checkout-total-row"><span>Outstanding balance</span><strong id="paymentAmountDue">Kshs. 0.00</strong></div>
+      <p id="paymentCumulativeSummary" class="payment-hint"></p>
+      <label class="payment-amount-field"><span class="field-label">Payment amount now (Kshs)</span><input id="paymentAmount" type="number" min="0.01" step="0.01" inputmode="decimal"></label>
 
       <fieldset class="payment-methods">
         <legend>Payment method</legend>
@@ -400,7 +412,7 @@
       <p id="paymentModalStatus" class="checkout-status" role="status" aria-live="polite"></p>
       <div class="checkout-modal-actions">
         <button class="continue-btn" type="button" onclick="closePaymentModal()">Back to invoice</button>
-        <button class="custom-btn" type="button" onclick="submitInvoicePaymentFromModal()">Pay &amp; Confirm</button>
+        <button class="custom-btn" type="button" id="submitInvoicePaymentButton" onclick="submitInvoicePaymentFromModal()">Record payment</button>
       </div>
     </div>
   </div>
@@ -416,6 +428,7 @@
         <button class="refresh-btn" type="button" onclick="generateJPEG(currentDocument.type, currentDocument.reference)">Download JPEG</button>
         <button class="whatsapp-btn" type="button" onclick="shareDocumentViaWhatsApp()">Share via WhatsApp</button>
         <button class="custom-btn" type="button" id="convertQuotationButton" onclick="convertCurrentQuotationToInvoice()" hidden>Convert to invoice</button>
+        <button class="custom-btn" type="button" id="startInvoiceProductionButton" onclick="startInvoiceProductionFromPreview()" hidden>Start production</button>
         <button class="custom-btn" type="button" id="proceedToPaymentButton" onclick="openPaymentModal()" hidden>Proceed to payment</button>
         <button class="custom-btn" type="button" id="confirmDocumentPaymentButton" onclick="confirmCurrentInvoicePayment()" hidden>Confirm payment</button>
       </div>

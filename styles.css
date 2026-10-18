@@ -82,6 +82,8 @@ h1 { font-weight: 700; font-size: clamp(1.8rem, 3vw, 2.45rem); line-height: 1.04
 .job-quote-line { display: grid; grid-template-columns: minmax(180px, 2fr) minmax(80px, .65fr) minmax(130px, 1fr) minmax(145px, 1fr) 36px; align-items: end; gap: 10px; padding: 12px 0; border-bottom: 1px solid var(--line); }
 .job-quote-line label { min-width: 0; }
 .job-quote-production { display: flex; align-items: center; gap: 7px; min-height: 39px; color: var(--ink); font-size: .76rem; }
+.job-quote-production[hidden] { display: none; }
+.invoice-start-production { margin: 14px 0; padding: 11px 12px; border: 1px solid var(--line); border-radius: 8px; background: #fff; }
 .job-quote-production input { width: auto; accent-color: var(--red); }
 .job-quote-remove { width: 36px; height: 36px; border: 1px solid var(--line); border-radius: 8px; background: #fff; color: var(--muted); font-size: 1.2rem; cursor: pointer; }
 .job-quote-remove:hover { border-color: var(--red); color: var(--red); }
@@ -102,7 +104,9 @@ h1 { font-weight: 700; font-size: clamp(1.8rem, 3vw, 2.45rem); line-height: 1.04
 .documents-refresh-group { display: flex; align-items: center; justify-content: flex-end; gap: 10px; min-width: 0; }
 .documents-sync-status { color: var(--muted); font-size: .72rem; text-align: right; }
 .finance-month-field { display: grid; gap: 4px; min-width: 150px; }
-.finance-month-field input, .expense-entry-form input, .expense-entry-form select { width: 100%; min-width: 0; padding: 9px 10px; border: 1px solid var(--line); border-radius: 8px; background: #fff; color: var(--ink); }
+.finance-month-field input, .finance-month-field select, .expense-entry-form input, .expense-entry-form select { width: 100%; min-width: 0; padding: 9px 10px; border: 1px solid var(--line); border-radius: 8px; background: #fff; color: var(--ink); }
+.finance-custom-range { display: flex; flex-wrap: wrap; gap: 8px; }
+.finance-period-status { min-height: 1.2em; margin: 0 0 8px; color: var(--muted); font-size: .76rem; }
 .expense-entry-section { margin: 22px 0 16px; padding-top: 18px; border-top: 1px solid var(--line); }
 .expense-entry-section h3 { margin-bottom: 12px; font-size: 1rem; }
 .expense-entry-form { display: grid; grid-template-columns: minmax(130px, .8fr) minmax(160px, 1fr) minmax(180px, 1.4fr) minmax(120px, .8fr) auto; align-items: end; gap: 10px; }
@@ -119,6 +123,7 @@ h1 { font-weight: 700; font-size: clamp(1.8rem, 3vw, 2.45rem); line-height: 1.04
 .document-status-tag { padding: 3px 8px; border-radius: 999px; font-size: .68rem; font-weight: 800; text-transform: uppercase; }
 .document-status-tag.is-paid { background: #e4f5ec; color: var(--green); }
 .document-status-tag.is-pending { background: #fdf3e4; color: #8a5a12; }
+.document-status-tag.is-partial { background: #fff1dd; color: #9b5c00; }
 .document-status-tag.is-active { background: #eaf1fb; color: #2255a4; }
 .document-status-tag.is-quoted { background: #f0eefb; color: #5c3ea8; }
 .documents-row-actions { display: flex; flex-wrap: wrap; gap: 6px; }
@@ -145,6 +150,7 @@ h1 { font-weight: 700; font-size: clamp(1.8rem, 3vw, 2.45rem); line-height: 1.04
 .refresh-btn { display: inline-flex; align-items: center; gap: 6px; border: 1px solid var(--line); border-radius: 10px; padding: 9px 13px; background: #fff; color: var(--ink); font-size: .78rem; font-weight: 800; cursor: pointer; }
 .refresh-btn:hover { border-color: var(--red); color: var(--red); }
 .refresh-btn:disabled { opacity: .6; cursor: not-allowed; }
+.install-app-status { display: block; max-width: 520px; margin-top: 5px; color: var(--muted); font-size: .72rem; line-height: 1.4; overflow-wrap: anywhere; }
 .refresh-btn .refresh-icon { display: inline-block; font-size: .95rem; transition: transform 400ms ease; }
 .refresh-btn.is-loading .refresh-icon { animation: spin 800ms linear infinite; }
 @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
@@ -286,6 +292,8 @@ h1 { font-weight: 700; font-size: clamp(1.8rem, 3vw, 2.45rem); line-height: 1.04
 .payment-option small, .payment-hint { color: var(--muted); font-size: .75rem; }
 .payment-fields { display: grid; gap: 10px; }
 .payment-fields input { width: 100%; padding: 10px 12px; border: 1px solid var(--line); border-radius: 9px; outline: none; }
+.payment-amount-field { display: grid; gap: 5px; margin: 12px 0; }
+.payment-amount-field input { width: 100%; padding: 10px 12px; border: 1px solid var(--line); border-radius: 9px; outline: none; }
 .payment-hint { margin: 0; line-height: 1.45; }
 .paybill-details { color: var(--muted); font-size: .78rem; }
 .paybill-details strong { color: var(--ink); font-size: 1rem; }
@@ -315,6 +323,9 @@ h1 { font-weight: 700; font-size: clamp(1.8rem, 3vw, 2.45rem); line-height: 1.04
 .document-render-table td { padding: 9px 8px; border-bottom: 1px solid var(--line); }
 .document-render-table th:last-child, .document-render-table td:last-child { text-align: right; }
 .document-render-total { display: flex; justify-content: flex-end; gap: 20px; margin-top: 18px; font-size: 1rem; font-weight: 800; }
+.document-payment-summary { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px 18px; margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--line); color: var(--muted); font-size: .78rem; }
+.document-payment-summary span { display: flex; gap: 6px; }
+.document-payment-summary strong { color: var(--ink); }
 .document-payment-note { position: relative; z-index: 1; margin-top: 16px; padding: 12px 14px; border-radius: 9px; background: #fdf3e4; color: #8a5a12; font-size: .82rem; line-height: 1.5; text-align: center; }
 .document-payment-note.is-success { background: #e9f7ef; color: #1b6d3f; }
 .document-watermark-logo { position: absolute; top: 50%; left: 50%; z-index: 0; width: 60%; max-width: 340px; opacity: .07; transform: translate(-50%, -50%); pointer-events: none; }
@@ -420,6 +431,8 @@ h1 { font-weight: 700; font-size: clamp(1.8rem, 3vw, 2.45rem); line-height: 1.04
   .documents-toolbar { flex-direction: column; align-items: stretch; }
   .documents-refresh-group { flex-wrap: wrap; justify-content: flex-start; }
   .finance-month-field { flex: 1 1 100%; }
+  .finance-custom-range { width: 100%; }
+  .finance-custom-range .finance-month-field { flex: 1 1 135px; }
   .expense-entry-form { grid-template-columns: 1fr; }
   .expense-entry-form .expense-description-field { grid-column: auto; }
   .documents-filter { overflow-x: auto; }

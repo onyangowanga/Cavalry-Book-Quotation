@@ -1,7 +1,8 @@
-const CACHE_NAME = 'cavalry-quote-builder-v18';
+const CACHE_NAME = 'cavalry-quote-builder-v24';
 const APP_SHELL = [
   './',
   './index.html',
+  './manifest.json',
   './styles.css',
   './app.js',
   './favicon/favicon.svg',

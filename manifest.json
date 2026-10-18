@@ -2,6 +2,7 @@
   "name": "Cavalry Publishers Quote Builder",
   "short_name": "Cavalry Publishers",
   "description": "Build and share printing quotations from the Cavalry Publishers catalogue.",
+  "id": "./index.html",
   "start_url": "./",
   "scope": "./",
   "display": "standalone",
@@ -9,7 +10,13 @@
   "theme_color": "#24232a",
   "icons": [
     {
-      "src": "https://drive.google.com/thumbnail?id=1F2xjo6EPzhSGZMFRrP8IAaMWXe_o7xKG&sz=w512",
+      "src": "./favicon/web-app-manifest-192x192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "./favicon/web-app-manifest-512x512.png",
       "sizes": "512x512",
       "type": "image/png",
       "purpose": "any"

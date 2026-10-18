@@ -67,6 +67,7 @@ let customBookQuoteDraft = null;
 let allExpenses = [];
 let expensesRequest = null;
 let editingDocument = null;
+let deferredInstallPrompt = null;
 
 const OFFSET_PAPER_COSTS = {
   'Bond 70': 1100,
@@ -87,8 +88,54 @@ const MASS_COVER_GENERAL_PER_COPY = { A5: 30, A4: 45, A6: 25 };
 const CLIENT_PROFIT_MARKUP = 0.20;
 const ADMIN_PROFIT_MARKUP = 0.20;
 
-window.addEventListener('load', () => { loadCatalog(); updateStaffUI(); calculateClientMassQuote('booklet'); syncTopbarHeight(); });
+window.addEventListener('load', () => { loadCatalog(); updateStaffUI(); calculateClientMassQuote('booklet'); syncTopbarHeight(); updateInstallAvailability(); });
 window.addEventListener('resize', syncTopbarHeight);
+
+window.addEventListener('beforeinstallprompt', event => {
+  event.preventDefault();
+  deferredInstallPrompt = event;
+  const button = document.getElementById('installAppButton');
+  if (button && !isAppInstalled()) button.hidden = false;
+});
+
+window.addEventListener('appinstalled', () => {
+  deferredInstallPrompt = null;
+  const button = document.getElementById('installAppButton');
+  if (button) button.hidden = true;
+  document.getElementById('installAppStatus').textContent = 'App installed.';
+});
+
+function isAppInstalled() {
+  return window.matchMedia('(display-mode: standalone)').matches || navigator.standalone === true;
+}
+
+function updateInstallAvailability() {
+  const button = document.getElementById('installAppButton');
+  const status = document.getElementById('installAppStatus');
+  if (!button) return;
+  button.hidden = isAppInstalled();
+  if (!isAppInstalled() && (!window.isSecureContext || location.protocol === 'file:')) {
+    status.textContent = 'Install requires the hosted HTTPS site or localhost; a file opened directly from your PC cannot be installed as a PWA.';
+  }
+}
+
+async function installPWA() {
+  const status = document.getElementById('installAppStatus');
+  if (isAppInstalled()) {
+    status.textContent = 'App is already installed.';
+    return;
+  }
+  if (!deferredInstallPrompt) {
+    status.textContent = !window.isSecureContext || location.protocol === 'file:'
+      ? 'Install requires the hosted HTTPS site or localhost; a file opened directly from your PC cannot be installed as a PWA.'
+      : 'In Edge or Chrome, open the browser menu and choose Install this site as an app. If unavailable, check that the site is hosted on HTTPS and refresh.';
+    return;
+  }
+  deferredInstallPrompt.prompt();
+  const choice = await deferredInstallPrompt.userChoice;
+  status.textContent = choice.outcome === 'accepted' ? 'Installing app…' : 'Installation cancelled.';
+  deferredInstallPrompt = null;
+}
 
 // Keeps the fixed header's real height in sync so page content never sits underneath it.
 function syncTopbarHeight() {
@@ -426,7 +473,7 @@ function editDocumentFromList(type, reference) {
   if (!isStaff || !['quotation', 'invoice'].includes(type)) return;
   const doc = allDocuments.find(entry => entry.type === type && entry.reference === reference);
   if (!doc) return;
-  if ((type === 'quotation' && doc.status !== 'ACTIVE') || (type === 'invoice' && doc.status !== 'PENDING')) {
+  if ((type === 'quotation' && doc.status !== 'ACTIVE') || (type === 'invoice' && (!['PENDING', 'PARTIALLY_PAID'].includes(doc.status) || Number(doc.balance ?? doc.total) <= 0))) {
     alert('Only unconverted quotations and unpaid invoices can be edited.');
     return;
   }
@@ -1204,6 +1251,8 @@ async function openInvoiceModal() {
   document.getElementById('invoiceDeliveryCost').value = '';
   document.getElementById('invoiceOtherChargeLabel').value = '';
   document.getElementById('invoiceOtherChargeAmount').value = '';
+  document.getElementById('invoiceStartProductionRow').hidden = !isStaff;
+  document.getElementById('invoiceStartProduction').checked = false;
   updateInvoicePreviewTotal();
   document.getElementById('invoiceModalStatus').textContent = '';
   document.getElementById('invoiceModalStatus').className = 'checkout-status';
@@ -1226,13 +1275,14 @@ async function generateInvoiceFromModal() {
   const deliveryCost = Math.max(0, Number(document.getElementById('invoiceDeliveryCost').value) || 0);
   const otherLabel = document.getElementById('invoiceOtherChargeLabel').value.trim();
   const otherAmount = Math.max(0, Number(document.getElementById('invoiceOtherChargeAmount').value) || 0);
+  const startProduction = isStaff && document.getElementById('invoiceStartProduction').checked;
   const extraCharges = [];
   if (deliveryCost > 0) extraCharges.push({ label: 'Delivery / shipping cost', amount: deliveryCost });
   if (otherAmount > 0) extraCharges.push({ label: otherLabel || 'Additional charge', amount: otherAmount });
 
   setInvoiceModalStatus('Generating your invoice...', '');
   try {
-    const result = await requestInvoiceConversion(currentQuotationReference, clientName, clientPhone, extraCharges);
+    const result = await requestInvoiceConversion(currentQuotationReference, clientName, clientPhone, extraCharges, startProduction);
     if (result.status !== 'success') throw new Error(result.message || 'The invoice could not be generated.');
     currentDocument = result.data;
     currentDocument.type = 'invoice';
@@ -1250,15 +1300,20 @@ async function generateInvoiceFromModal() {
   }
 }
 
-async function requestInvoiceConversion(quotationReference, clientName, clientPhone, extraCharges) {
-  return postApi({ action: 'convert_quote_to_invoice', quotationReference, clientName, clientPhone, extraCharges });
+async function requestInvoiceConversion(quotationReference, clientName, clientPhone, extraCharges, startProduction = false) {
+  return postApi({ action: 'convert_quote_to_invoice', quotationReference, clientName, clientPhone, extraCharges, startProduction });
 }
 
 function openPaymentModal() {
   if (!currentDocument || currentDocument.type !== 'invoice' || currentDocument.status === 'PAID') return;
   closeDocumentPreview();
+  const balance = Number(currentDocument.balance ?? currentDocument.total ?? 0);
   document.getElementById('paymentInvoiceReference').textContent = currentDocument.reference;
-  document.getElementById('paymentAmountDue').textContent = formatKshs(currentDocument.total);
+  document.getElementById('paymentAmountDue').textContent = formatKshs(balance);
+  document.getElementById('paymentCumulativeSummary').textContent = `Invoice total ${formatKshs(currentDocument.total)} · Already paid ${formatKshs(currentDocument.amountPaid || 0)}`;
+  const paymentAmount = document.getElementById('paymentAmount');
+  paymentAmount.value = balance.toFixed(2);
+  paymentAmount.max = balance.toFixed(2);
   document.getElementById('paymentMpesaPhone').value = document.getElementById('clientPhone').value.trim();
   document.getElementById('paymentPaybillCode').value = '';
   document.querySelector('input[name="invoicePaymentMethod"][value="mpesa"]').checked = true;
@@ -1290,15 +1345,25 @@ async function submitInvoicePaymentFromModal() {
   const method = document.querySelector('input[name="invoicePaymentMethod"]:checked').value;
   const phone = document.getElementById('paymentMpesaPhone').value.trim();
   const transactionCode = document.getElementById('paymentPaybillCode').value.trim();
+  const paymentAmount = Number(document.getElementById('paymentAmount').value);
+  const balance = Number(currentDocument.balance ?? currentDocument.total ?? 0);
+  if (!Number.isFinite(paymentAmount) || paymentAmount <= 0 || paymentAmount - balance > 0.005) {
+    setPaymentModalStatus(`Enter an amount greater than zero and no more than ${formatKshs(balance)}.`, 'error');
+    return;
+  }
   if (method === 'mpesa' && phone.replace(/\D/g, '').length < 10) {
     setPaymentModalStatus('Enter the M-Pesa phone number used to pay the till.', 'error');
     return;
   }
+  const submitButton = document.getElementById('submitInvoicePaymentButton');
+  submitButton.disabled = true;
   setPaymentModalStatus('Submitting your payment for verification...', '');
   try {
     const result = await postApi({
       action: 'confirm_invoice_payment',
       invoiceReference: currentDocument.reference,
+      paymentAmount,
+      paymentRequestId: crypto.randomUUID ? crypto.randomUUID() : `PAY-${Date.now()}-${Math.random().toString(36).slice(2)}`,
       paymentMethod: method,
       paymentReference: method === 'mpesa' ? phone : transactionCode
     });
@@ -1310,6 +1375,8 @@ async function submitInvoicePaymentFromModal() {
   } catch (error) {
     console.error('Invoice payment failed:', error);
     setPaymentModalStatus(error.message || 'The payment could not be confirmed. Please try again.', 'error');
+  } finally {
+    submitButton.disabled = false;
   }
 }
 
@@ -1325,12 +1392,23 @@ function renderDocumentHtml(documentData) {
   const status = String(documentData.status || 'PENDING').toUpperCase();
   const items = documentData.items || [];
   const type = String(documentData.type || 'invoice').toLowerCase();
-  const requiresProduction = items.some(isProductionBookItem);
+  const requiresProduction = Boolean(documentData.requiresProduction) || items.some(isProductionBookItem);
+  const financialSummary = type === 'invoice'
+    ? `<div class="document-payment-summary"><span>Invoice total <strong>${formatKshs(documentData.total)}</strong></span><span>Payments received <strong>${formatKshs(documentData.amountPaid || 0)}</strong></span><span>Balance due <strong>${formatKshs(documentData.balance ?? documentData.total)}</strong></span></div>`
+    : '';
   let noteHtml = '';
   if (type === 'invoice' && status !== 'PAID') {
-    noteHtml = `<div class="document-payment-note">Please make payment of <strong>Kshs. ${Number(documentData.total || 0).toLocaleString('en-US', { minimumFractionDigits: 2 })}</strong> to <strong>Till No. ${TILL_NUMBER}</strong> to confirm this ${requiresProduction ? 'order' : 'invoice'}.${requiresProduction ? '<br>Production begins after receipt of payment. Delivery within 2 working days.' : ''}</div>`;
+    noteHtml = `<div class="document-payment-note">Please make payment of <strong>${formatKshs(documentData.balance ?? documentData.total)}</strong> to <strong>Till No. ${TILL_NUMBER}</strong> toward this ${requiresProduction ? 'order' : 'invoice'}.${requiresProduction ? '<br>Production begins after receipt of payment. Delivery within 2 working days.' : ''}</div>`;
   } else if (type === 'receipt') {
-    noteHtml = `<div class="document-payment-note is-success">${requiresProduction ? 'Payment received. Your order has been placed and production begins.<br>Delivery within 2 working days.' : 'Payment received. Thank you for your business.'}</div>`;
+    const amountPaid = Number(documentData.paymentAmount ?? documentData.total ?? 0);
+    const balance = Number(documentData.balance || 0);
+    const paymentDetail = `Payment of ${formatKshs(amountPaid)} received. Cumulative paid: ${formatKshs(documentData.cumulativePaid || amountPaid)}. Balance: ${formatKshs(balance)}.`;
+    const receiptMessage = documentData.orderCompleted
+      ? `${paymentDetail} It was a pleasure doing business with you.`
+      : requiresProduction
+        ? `${paymentDetail}<br>Your order has been placed and production begins. Delivery within 2 working days.`
+        : `${paymentDetail} Thank you for your business.`;
+    noteHtml = `<div class="document-payment-note is-success">${receiptMessage}</div>`;
   }
   return `<img class="document-watermark-logo" src="${COMPANY_LOGO_URL}" alt="" crossorigin="anonymous" aria-hidden="true" onerror="this.style.display='none';">
     <header class="document-render-header">
@@ -1343,6 +1421,7 @@ function renderDocumentHtml(documentData) {
     <div class="document-render-meta"><div>Prepared for<strong>${escapeHtml(documentData.clientName || 'Valued Client')}</strong><span>${escapeHtml(documentData.clientPhone || 'Phone not provided')}</span></div><div>Payment status<strong>${escapeHtml(status)}</strong><span>${escapeHtml(documentData.paymentMethod || 'Payment pending')}</span></div></div>
     <table class="document-render-table"><thead><tr><th>Description</th><th>Qty</th><th>Unit price</th><th>Amount</th></tr></thead><tbody>${items.map(item => `<tr><td>${escapeHtml(item.title || item.name || '')}<br><small>${escapeHtml(item.mode || '')} ${escapeHtml(item.size || '')}</small></td><td>${item.quantity || 0}</td><td>Kshs. ${Number(item.unitPrice || 0).toLocaleString('en-US', { minimumFractionDigits: 2 })}</td><td>Kshs. ${Number(item.total || 0).toLocaleString('en-US', { minimumFractionDigits: 2 })}</td></tr>`).join('')}</tbody></table>
     <div class="document-render-total"><span>Total Kshs.</span><strong>${Number(documentData.total || 0).toLocaleString('en-US', { minimumFractionDigits: 2 })}</strong></div>
+    ${financialSummary}
     ${noteHtml}
     <div class="document-status-stamp ${status === 'PAID' ? '' : 'pending'}">${escapeHtml(status)}</div>`;
 }
@@ -1353,7 +1432,9 @@ function openDocumentPreview() {
   document.getElementById('documentRenderSurface').innerHTML = renderDocumentHtml(currentDocument);
   const isPendingInvoice = currentDocument.type === 'invoice' && currentDocument.status !== 'PAID';
   const isActiveQuotation = isStaff && currentDocument.type === 'quotation' && currentDocument.status === 'ACTIVE';
+  const canStartProduction = isStaff && isPendingInvoice && (currentDocument.items || []).some(isProductionBookItem) && !invoiceHasProductionOrder(currentDocument.reference);
   document.getElementById('convertQuotationButton').hidden = !isActiveQuotation;
+  document.getElementById('startInvoiceProductionButton').hidden = !canStartProduction;
   document.getElementById('proceedToPaymentButton').hidden = !isPendingInvoice;
   document.getElementById('confirmDocumentPaymentButton').hidden = !(isStaff && isPendingInvoice);
   document.getElementById('documentPreviewModal').style.display = 'flex';
@@ -1363,11 +1444,14 @@ function closeDocumentPreview() { document.getElementById('documentPreviewModal'
 
 async function confirmCurrentInvoicePayment() {
   if (!currentDocument || currentDocument.type !== 'invoice' || !isStaff) return;
+  const balance = Number(currentDocument.balance ?? currentDocument.total ?? 0);
+  const paymentAmount = Number(prompt(`Payment amount (outstanding balance ${formatKshs(balance)}):`, balance.toFixed(2)));
+  if (!Number.isFinite(paymentAmount) || paymentAmount <= 0) return;
   const paymentMethod = prompt('Payment method (cash, mpesa, or paybill):', 'cash');
   if (!paymentMethod) return;
   const paymentReference = prompt('Payment reference or transaction code (optional):', '') || '';
   try {
-    const result = await postApi({ action: 'confirm_invoice_payment', invoiceReference: currentDocument.reference, paymentMethod, paymentReference });
+    const result = await postApi({ action: 'confirm_invoice_payment', invoiceReference: currentDocument.reference, paymentAmount, paymentRequestId: crypto.randomUUID ? crypto.randomUUID() : `PAY-${Date.now()}-${Math.random().toString(36).slice(2)}`, paymentMethod, paymentReference });
     if (result.status !== 'success') throw new Error(result.message || 'Payment confirmation failed.');
     currentDocument = result.data;
     currentDocument.type = 'receipt';
@@ -1492,10 +1576,56 @@ function currentFinanceMonth() {
   return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
 }
 
+function currentFinanceDate() {
+  const now = new Date();
+  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+}
+
+function updateFinancePeriodControls() {
+  const period = document.getElementById('financePeriod').value;
+  document.getElementById('financeMonthControl').hidden = period !== 'monthly';
+  document.getElementById('financeYearControl').hidden = period !== 'yearly';
+  document.getElementById('financeCustomRange').hidden = period !== 'custom';
+  renderMonthlyFinance();
+}
+
+function getSelectedFinancePeriod() {
+  const type = document.getElementById('financePeriod')?.value || 'monthly';
+  const today = currentFinanceDate();
+  if (type === 'monthly') {
+    const month = document.getElementById('financeMonth').value || currentFinanceMonth();
+    const [year, monthNumber] = month.split('-').map(Number);
+    const lastDay = new Date(year, monthNumber, 0).getDate();
+    return { valid: true, type, start: `${month}-01`, end: `${month}-${String(lastDay).padStart(2, '0')}`, label: month };
+  }
+  if (type === 'yearly') {
+    const year = Number(document.getElementById('financeYear').value || new Date().getFullYear());
+    return { valid: Number.isInteger(year) && year >= 2000 && year <= 9999, type, start: `${year}-01-01`, end: `${year}-12-31`, label: String(year) };
+  }
+  if (type === 'cumulative') return { valid: true, type, start: '0001-01-01', end: today, label: `All time through ${today}` };
+  const start = document.getElementById('financeStartDate').value;
+  const end = document.getElementById('financeEndDate').value;
+  return { valid: Boolean(start && end && start <= end), type, start, end, label: start && end ? `${start} to ${end}` : 'Choose a start and end date' };
+}
+
+function isDateInFinancePeriod(value, period) {
+  const date = dateToFinanceDate(value);
+  return Boolean(date && date >= period.start && date <= period.end);
+}
+
 async function loadFinancials() {
   if (!isStaff) return;
+  const periodSelect = document.getElementById('financePeriod');
+  if (periodSelect && !periodSelect.value) periodSelect.value = 'monthly';
   const monthInput = document.getElementById('financeMonth');
   if (monthInput && !monthInput.value) monthInput.value = currentFinanceMonth();
+  const yearInput = document.getElementById('financeYear');
+  if (yearInput && !yearInput.value) yearInput.value = String(new Date().getFullYear());
+  const startInput = document.getElementById('financeStartDate');
+  const endInput = document.getElementById('financeEndDate');
+  if (startInput && !startInput.value) startInput.value = `${currentFinanceMonth()}-01`;
+  if (endInput && !endInput.value) endInput.value = currentFinanceDate();
+  updateFinancePeriodControls();
   const dateInput = document.getElementById('expenseDate');
   if (dateInput && !dateInput.value) {
     const now = new Date();
@@ -1533,9 +1663,17 @@ async function loadExpenses() {
 }
 
 function renderMonthlyFinance() {
-  const month = document.getElementById('financeMonth')?.value || currentFinanceMonth();
-  const revenueRows = allDocuments.filter(doc => doc.type === 'receipt' && dateToFinanceMonth(doc.timestamp) === month);
-  const expenseRows = allExpenses.filter(expense => String(expense.date || '').slice(0, 7) === month);
+  const period = getSelectedFinancePeriod();
+  const periodStatus = document.getElementById('financePeriodStatus');
+  if (!period.valid) {
+    if (periodStatus) periodStatus.textContent = 'Choose a valid report period; the start date must be on or before the end date.';
+    document.getElementById('financeSummary').innerHTML = '';
+    renderExpensesTable([]);
+    return;
+  }
+  if (periodStatus) periodStatus.textContent = period.label;
+  const revenueRows = allDocuments.filter(doc => doc.type === 'receipt' && isDateInFinancePeriod(doc.timestamp, period));
+  const expenseRows = allExpenses.filter(expense => isDateInFinancePeriod(expense.date, period));
   const income = revenueRows.reduce((sum, receipt) => sum + Number(receipt.total || 0), 0);
   const expenses = expenseRows.reduce((sum, expense) => sum + Number(expense.amount || 0), 0);
   const profit = income - expenses;
@@ -1561,9 +1699,14 @@ function renderExpensesTable(expenses) {
 }
 
 function dateToFinanceMonth(value) {
+  return dateToFinanceDate(value).slice(0, 7);
+}
+
+function dateToFinanceDate(value) {
+  if (typeof value === 'string' && /^\d{4}-\d{2}-\d{2}/.test(value)) return value.slice(0, 10);
   const date = new Date(value);
-  if (!Number.isFinite(date.getTime())) return String(value || '').slice(0, 7);
-  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
+  if (!Number.isFinite(date.getTime())) return '';
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
 }
 
 async function addExpense(event) {
@@ -1603,13 +1746,17 @@ async function addExpense(event) {
 }
 
 function downloadMonthlyFinanceReport() {
-  const month = document.getElementById('financeMonth').value || currentFinanceMonth();
-  const receipts = allDocuments.filter(doc => doc.type === 'receipt' && dateToFinanceMonth(doc.timestamp) === month);
-  const expenses = allExpenses.filter(expense => String(expense.date || '').slice(0, 7) === month);
+  const period = getSelectedFinancePeriod();
+  if (!period.valid) {
+    document.getElementById('financePeriodStatus').textContent = 'Choose a valid report period before downloading.';
+    return;
+  }
+  const receipts = allDocuments.filter(doc => doc.type === 'receipt' && isDateInFinancePeriod(doc.timestamp, period));
+  const expenses = allExpenses.filter(expense => isDateInFinancePeriod(expense.date, period));
   const incomeTotal = receipts.reduce((sum, receipt) => sum + Number(receipt.total || 0), 0);
   const expenseTotal = expenses.reduce((sum, expense) => sum + Number(expense.amount || 0), 0);
   const rows = [
-    ['Monthly financial summary', month],
+    ['Financial summary', period.label],
     ['Payments received (Kshs)', incomeTotal],
     ['Expenses (Kshs)', expenseTotal],
     ['Net cash profit (Kshs)', incomeTotal - expenseTotal],
@@ -1621,7 +1768,7 @@ function downloadMonthlyFinanceReport() {
   const csv = rows.map(row => row.map(value => `"${String(value).replace(/"/g, '""')}"`).join(',')).join('\r\n');
   const link = document.createElement('a');
   link.href = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8' }));
-  link.download = `cavalry-financial-report-${month}.csv`;
+  link.download = `cavalry-financial-report-${period.type}-${period.start}-to-${period.end}.csv`;
   link.click();
   URL.revokeObjectURL(link.href);
 }
@@ -1636,16 +1783,24 @@ function renderAccountingSummary() {
   const quotesTotal = quotations.reduce((sum, doc) => sum + doc.total, 0);
   const invoices = allDocuments.filter(doc => doc.type === 'invoice');
   const outstandingInvoices = invoices.filter(doc => doc.status !== 'PAID');
-  const outstandingTotal = outstandingInvoices.reduce((sum, doc) => sum + doc.total, 0);
+  const outstandingTotal = outstandingInvoices.reduce((sum, doc) => sum + Number(doc.balance ?? doc.total ?? 0), 0);
   const receipts = allDocuments.filter(doc => doc.type === 'receipt');
   const collectedTotal = receipts.reduce((sum, doc) => sum + doc.total, 0);
   const orders = allDocuments.filter(doc => doc.type === 'order');
   const inProduction = orders.filter(doc => doc.status !== 'COMPLETED');
   const deliveries = allDocuments.filter(doc => doc.type === 'delivery');
+  const productionStartedBeforePayment = invoices.filter(doc =>
+    doc.status !== 'PAID' &&
+    Number(doc.balance ?? doc.total) > 0 &&
+    (doc.items || []).some(isProductionBookItem) &&
+    invoiceHasProductionOrder(doc.reference)
+  );
+  const trustedBalance = productionStartedBeforePayment.reduce((sum, doc) => sum + Number(doc.balance ?? doc.total ?? 0), 0);
 
   const cards = [
     { label: 'Quotes issued', value: `${quotations.length} · ${formatKshs(quotesTotal)}` },
     { label: 'Outstanding invoices', value: `${outstandingInvoices.length} · ${formatKshs(outstandingTotal)}`, highlight: true },
+    { label: 'Production before payment', value: `${productionStartedBeforePayment.length} · ${formatKshs(trustedBalance)}` },
     { label: 'Revenue collected', value: `${receipts.length} · ${formatKshs(collectedTotal)}` },
     { label: 'In production', value: `${inProduction.length} of ${orders.length} orders` },
     { label: 'Delivered', value: `${deliveries.length}` }
@@ -1664,10 +1819,18 @@ function setDocumentsFilter(filter) {
 function documentStatusClass(status) {
   const normalized = String(status || '').toUpperCase();
   if (normalized === 'PAID' || normalized === 'COMPLETED' || normalized === 'ISSUED') return 'is-paid';
+  if (normalized === 'PARTIALLY_PAID') return 'is-partial';
   if (normalized === 'ACTIVE') return 'is-active';
   if (normalized === 'CONVERTED') return 'is-quoted';
   if (normalized === 'IN_PRODUCTION') return 'is-quoted';
   return 'is-pending';
+}
+
+function invoiceHasProductionOrder(invoiceReference) {
+  const receiptReferences = allDocuments
+    .filter(doc => doc.type === 'receipt' && doc.parentReference === invoiceReference)
+    .map(doc => doc.reference);
+  return allDocuments.some(doc => doc.type === 'order' && (doc.parentReference === invoiceReference || receiptReferences.includes(doc.parentReference)));
 }
 
 function renderDocumentsTable() {
@@ -1691,9 +1854,12 @@ function renderDocumentsTable() {
       actions.push(`<button type="button" onclick="editDocumentFromList('quotation', '${escapeHtml(doc.reference)}')">Edit</button>`);
       actions.push(`<button type="button" onclick="deleteQuotationFromList('${escapeHtml(doc.reference)}')">Delete</button>`);
     }
-    if (doc.type === 'invoice' && doc.status === 'PENDING') {
+    if (doc.type === 'invoice' && ['PENDING', 'PARTIALLY_PAID'].includes(doc.status) && Number(doc.balance ?? doc.total) > 0) {
       actions.push(`<button type="button" onclick="confirmInvoicePaymentFromList('${escapeHtml(doc.reference)}')">Confirm payment</button>`);
       actions.push(`<button type="button" onclick="editDocumentFromList('invoice', '${escapeHtml(doc.reference)}')">Edit</button>`);
+      if ((doc.items || []).some(isProductionBookItem) && !invoiceHasProductionOrder(doc.reference)) {
+        actions.push(`<button type="button" onclick="startInvoiceProductionFromList('${escapeHtml(doc.reference)}')">Start production</button>`);
+      }
     }
     return `<tr>
       <td data-label="Date">${doc.timestamp ? new Date(doc.timestamp).toLocaleDateString('en-GB') : ''}</td>
@@ -1721,8 +1887,9 @@ async function convertQuoteToInvoiceFromList(quotationReference) {
   const clientPhone = prompt('Client phone number:', doc ? doc.clientPhone : '') || (doc ? doc.clientPhone : '');
   const deliveryCost = Number(prompt('Delivery / shipping cost (Kshs), leave blank for none:', '0')) || 0;
   const extraCharges = deliveryCost > 0 ? [{ label: 'Delivery / shipping cost', amount: deliveryCost }] : [];
+  const startProduction = confirm('Start production before payment? Choose OK for a trusted client who will pay on delivery.');
   try {
-    const result = await postApi({ action: 'convert_quote_to_invoice', quotationReference, clientName, clientPhone, extraCharges });
+    const result = await postApi({ action: 'convert_quote_to_invoice', quotationReference, clientName, clientPhone, extraCharges, startProduction });
     if (result.status !== 'success') throw new Error(result.message || 'Invoice creation failed.');
     currentDocument = result.data;
     currentDocument.type = 'invoice';
@@ -1735,12 +1902,42 @@ async function convertQuoteToInvoiceFromList(quotationReference) {
   }
 }
 
+async function startInvoiceProductionFromList(invoiceReference) {
+  const invoice = allDocuments.find(doc => doc.type === 'invoice' && doc.reference === invoiceReference);
+  if (!invoice || !confirm(`Start production for ${invoiceReference} before payment? The invoice balance will remain outstanding.`)) return;
+  try {
+    const result = await postApi({ action: 'start_invoice_production', invoiceReference, staffPassword });
+    if (result.status !== 'success') throw new Error(result.message || 'Production could not be started.');
+    await loadDocumentsTracker();
+    alert(result.alreadyStarted ? `Production is already running as ${result.orderReference}.` : `Production started as ${result.orderReference}. The invoice remains unpaid.`);
+  } catch (error) {
+    console.error('Starting invoice production failed:', error);
+    alert(error.message || 'Production could not be started. Please refresh and try again.');
+  }
+}
+
+async function startInvoiceProductionFromPreview() {
+  if (!currentDocument || currentDocument.type !== 'invoice') return;
+  const invoiceReference = currentDocument.reference;
+  closeDocumentPreview();
+  await startInvoiceProductionFromList(invoiceReference);
+  const refreshedInvoice = allDocuments.find(doc => doc.type === 'invoice' && doc.reference === invoiceReference);
+  if (refreshedInvoice) {
+    currentDocument = refreshedInvoice;
+    openDocumentPreview();
+  }
+}
+
 async function confirmInvoicePaymentFromList(invoiceReference) {
+  const invoice = allDocuments.find(entry => entry.type === 'invoice' && entry.reference === invoiceReference);
+  const balance = Number(invoice?.balance ?? invoice?.total ?? 0);
+  const paymentAmount = Number(prompt(`Payment amount (outstanding balance ${formatKshs(balance)}):`, balance.toFixed(2)));
+  if (!Number.isFinite(paymentAmount) || paymentAmount <= 0) return;
   const paymentMethod = prompt('Payment method (cash, mpesa, or paybill):', 'cash');
   if (!paymentMethod) return;
   const paymentReference = prompt('Payment reference or transaction code (optional):', '') || '';
   try {
-    const result = await postApi({ action: 'confirm_invoice_payment', invoiceReference, paymentMethod, paymentReference });
+    const result = await postApi({ action: 'confirm_invoice_payment', invoiceReference, paymentAmount, paymentRequestId: crypto.randomUUID ? crypto.randomUUID() : `PAY-${Date.now()}-${Math.random().toString(36).slice(2)}`, paymentMethod, paymentReference });
     if (result.status !== 'success') throw new Error(result.message || 'Payment confirmation failed.');
     // Confirming payment auto-creates a production Order server-side; refresh the whole tracker to show it.
     await loadDocumentsTracker();
@@ -1786,13 +1983,20 @@ async function shareDocumentViaWhatsApp() {
   const type = String(currentDocument.type || 'document').toLowerCase();
   const status = String(currentDocument.status || 'PENDING').toUpperCase();
   const isCompletedOrder = type === 'delivery' || (type === 'order' && status === 'COMPLETED');
-  const requiresProduction = (currentDocument.items || []).some(isProductionBookItem);
+  const requiresProduction = Boolean(currentDocument.requiresProduction) || (currentDocument.items || []).some(isProductionBookItem);
   const items = (currentDocument.items || []).map((item, index) => `${index + 1}. ${item.quantity} x ${item.title} - Kshs. ${Number(item.total || 0).toFixed(2)}`).join('\n');
   let note = '';
   if (type === 'invoice' && status !== 'PAID') {
-    note = `\n\nPlease make payment to *Till No. ${TILL_NUMBER}* to confirm this ${requiresProduction ? 'order' : 'invoice'}.${requiresProduction ? '\nProduction begins after receipt of payment. Delivery within 2 working days.' : ''}`;
+    note = `\n\nInvoice total: ${formatKshs(currentDocument.total)}\nPaid to date: ${formatKshs(currentDocument.amountPaid || 0)}\n*Balance due: ${formatKshs(currentDocument.balance ?? currentDocument.total)}*\nPlease pay the balance to *Till No. ${TILL_NUMBER}*.${requiresProduction ? '\nProduction begins after receipt of payment. Delivery within 2 working days.' : ''}`;
   } else if (type === 'receipt') {
-    note = requiresProduction ? `\n\nPayment received. Your order has been placed and production begins.\nDelivery within 2 working days.` : '\n\nPayment received. Thank you for your business.';
+    const amountPaid = Number(currentDocument.paymentAmount ?? currentDocument.total ?? 0);
+    const balance = Number(currentDocument.balance || 0);
+    const paymentSummary = `Payment received: ${formatKshs(amountPaid)}. Cumulative paid: ${formatKshs(currentDocument.cumulativePaid || amountPaid)}. Balance: ${formatKshs(balance)}.`;
+    note = currentDocument.orderCompleted
+      ? `\n\n${paymentSummary} It was a pleasure doing business with you.`
+      : requiresProduction
+        ? `\n\n${paymentSummary}\nYour order has been placed and production begins. Delivery within 2 working days.`
+        : `\n\n${paymentSummary} Thank you for your business.`;
   }
   const message = isCompletedOrder
     ? 'Your order is complete and ready for collection, It was a pleasure doing business with you..'

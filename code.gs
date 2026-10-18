@@ -241,11 +241,82 @@ function documentResponse(record, type) {
   }
   let items = [];
   try { items = JSON.parse(values[5] || '[]'); } catch (error) { items = []; }
+  let paymentMetadata = {};
+  if (type === 'receipt') {
+    try { paymentMetadata = JSON.parse(values[9] || '{}'); } catch (error) { paymentMetadata = {}; }
+  }
   return {
     type, timestamp: values[0], reference: values[1], parentReference: values[2], clientName: values[3], clientPhone: values[4],
     items, subtotal: Number(values[6] || 0), discount: Number(values[7] || 0), total: Number(values[8] || 0),
-    taxBreakdown: values[9] || '', status: values[10] || '', paymentMethod: values[11] || '', paymentReference: values[12] || ''
+    taxBreakdown: values[9] || '', status: values[10] || '', paymentMethod: values[11] || '', paymentReference: values[12] || '',
+    paymentAmount: Number(paymentMetadata.paymentAmount || (type === 'receipt' ? values[8] : 0)),
+    cumulativePaid: Number(paymentMetadata.cumulativePaid || (type === 'receipt' ? values[8] : 0)),
+    balance: Number(paymentMetadata.balance || 0),
+    orderCompleted: Boolean(paymentMetadata.orderCompleted),
+    requiresProduction: Boolean(paymentMetadata.requiresProduction)
   };
+}
+
+function withInvoicePaymentTotals(ss, invoiceData) {
+  if (!invoiceData || invoiceData.type !== 'invoice') return invoiceData;
+  const sheet = ss.getSheetByName('receipts_log');
+  let amountPaid = 0;
+  if (sheet && sheet.getLastRow() > 1) {
+    const rows = sheet.getDataRange().getValues();
+    for (let index = 1; index < rows.length; index++) {
+      if (String(rows[index][2] || '').trim() === String(invoiceData.reference).trim()) {
+        amountPaid += Number(rows[index][8] || 0);
+      }
+    }
+  }
+  const rawBalance = Number(invoiceData.total || 0) - amountPaid;
+  const balance = rawBalance <= 0.005 ? 0 : rawBalance;
+  return { ...invoiceData, amountPaid, balance, status: balance === 0 ? 'PAID' : amountPaid > 0 ? 'PARTIALLY_PAID' : 'PENDING' };
+}
+
+function getInvoiceOrderRecord(ss, invoiceReference) {
+  const ordersSheet = ss.getSheetByName('orders_log');
+  if (!ordersSheet || ordersSheet.getLastRow() < 2) return null;
+  const receiptReferences = new Set();
+  const receiptsSheet = ss.getSheetByName('receipts_log');
+  if (receiptsSheet && receiptsSheet.getLastRow() > 1) {
+    receiptsSheet.getDataRange().getValues().slice(1).forEach(row => {
+      if (String(row[2] || '').trim() === String(invoiceReference).trim()) receiptReferences.add(String(row[1] || '').trim());
+    });
+  }
+  const rows = ordersSheet.getDataRange().getValues();
+  for (let index = 1; index < rows.length; index++) {
+    const parentReference = String(rows[index][2] || '').trim();
+    if (parentReference === String(invoiceReference).trim() || receiptReferences.has(parentReference)) {
+      return { sheet: ordersSheet, rowNumber: index + 1, values: rows[index] };
+    }
+  }
+  return null;
+}
+
+function getInvoiceOrderStatus(ss, invoiceReference) {
+  const order = getInvoiceOrderRecord(ss, invoiceReference);
+  return order ? String(order.values[10] || '') : '';
+}
+
+function hasDeliveryForOrder(ss, orderReference) {
+  return Boolean(findDocumentByParent(ss, 'deliveries_log', orderReference));
+}
+
+function findReceiptByPaymentRequest(ss, invoiceReference, paymentRequestId) {
+  if (!paymentRequestId) return null;
+  const sheet = ss.getSheetByName('receipts_log');
+  if (!sheet || sheet.getLastRow() < 2) return null;
+  const rows = sheet.getDataRange().getValues();
+  for (let index = 1; index < rows.length; index++) {
+    if (String(rows[index][2] || '').trim() !== String(invoiceReference).trim()) continue;
+    try {
+      if (JSON.parse(rows[index][9] || '{}').paymentRequestId === paymentRequestId) {
+        return { sheet, rowNumber: index + 1, values: rows[index] };
+      }
+    } catch (error) {}
+  }
+  return null;
 }
 
 // Reads every row of a document sheet into a flat list for the admin tracking tab.
@@ -259,7 +330,9 @@ function listDocumentsFromSheet(ss, sheetName, type) {
     if (!values[0] && !values[1]) continue;
     // New-format rows always carry a QUO-prefixed reference in column B; anything else is a legacy row.
     const isLegacyQuote = sheetName === 'quotes_log' && !/^QUO-/i.test(String(values[1] || '').trim());
-    records.push(documentResponse({ sheet, rowNumber: index + 1, values, isLegacyQuote }, type));
+    const record = { sheet, rowNumber: index + 1, values, isLegacyQuote };
+    const response = documentResponse(record, type);
+    records.push(type === 'invoice' ? withInvoicePaymentTotals(ss, response) : response);
   }
   return records;
 }
@@ -458,12 +531,21 @@ function doPost(e) {
       const record = findDocument(ss, sheetName, postData.reference);
       if (!record) throw new Error(`${type} not found: ${postData.reference}`);
       const existing = documentResponse(record, type);
+      let existingInvoice = null;
+      let productionOrder = null;
       if (isQuotation) {
         if (existing.status !== 'ACTIVE' || findDocumentByParent(ss, 'invoices_log', existing.reference)) {
           throw new Error('Only unconverted quotations can be edited.');
         }
-      } else if (existing.status !== 'PENDING' || findDocumentByParent(ss, 'receipts_log', existing.reference)) {
-        throw new Error('Only unpaid invoices can be edited.');
+      } else {
+        existingInvoice = withInvoicePaymentTotals(ss, existing);
+        if (!['PENDING', 'PARTIALLY_PAID'].includes(existingInvoice.status) || existingInvoice.balance <= 0) {
+          throw new Error('Only invoices with an outstanding balance can be edited.');
+        }
+        productionOrder = getInvoiceOrderRecord(ss, existing.reference);
+        if (productionOrder && (String(productionOrder.values[10]) === 'COMPLETED' || hasDeliveryForOrder(ss, productionOrder.values[1]))) {
+          throw new Error('An invoice for a completed or delivered order cannot be edited.');
+        }
       }
 
       if (!Array.isArray(postData.items) || !postData.items.length) throw new Error('Add at least one line item.');
@@ -480,6 +562,9 @@ function doPost(e) {
       const discount = Math.max(0, Number(postData.discount || 0));
       if (!Number.isFinite(discount) || discount > subtotal) throw new Error('Discount cannot exceed the item subtotal.');
       const total = subtotal - discount;
+      if (existingInvoice && total <= existingInvoice.amountPaid) {
+        throw new Error('The revised invoice total must remain greater than the amount already paid.');
+      }
       const clientName = String(postData.clientName || '').trim();
       const clientPhone = String(postData.clientPhone || '').trim();
       if (!clientName) throw new Error('Client name is required.');
@@ -492,11 +577,20 @@ function doPost(e) {
         record.sheet.getRange(record.rowNumber, 4, 1, 6).setValues([
           [clientName, clientPhone, JSON.stringify(items), subtotal, discount, total]
         ]);
+        record.sheet.getRange(record.rowNumber, 11).setValue(existingInvoice.amountPaid > 0 ? 'PARTIALLY_PAID' : 'PENDING');
+        if (productionOrder) {
+          const updatedProductionItems = items.map(item => ({ ...item, printed: false }));
+          productionOrder.sheet.getRange(productionOrder.rowNumber, 4, 1, 6).setValues([
+            [clientName, clientPhone, JSON.stringify(updatedProductionItems), subtotal, discount, total]
+          ]);
+        }
       }
       upsertCustomer(ss, clientName, clientPhone);
       SpreadsheetApp.flush();
+      let updatedDocument = documentResponse(findDocument(ss, sheetName, existing.reference), type);
+      if (type === 'invoice') updatedDocument = withInvoicePaymentTotals(ss, updatedDocument);
       return ContentService
-        .createTextOutput(JSON.stringify({ status: 'success', data: documentResponse(findDocument(ss, sheetName, existing.reference), type) }))
+        .createTextOutput(JSON.stringify({ status: 'success', data: updatedDocument }))
         .setMimeType(ContentService.MimeType.JSON);
     }
 
@@ -552,45 +646,113 @@ function doPost(e) {
       // Mark the quotation as converted so it cannot be turned into a second invoice.
       quote.sheet.getRange(quote.rowNumber, quote.isLegacyQuote ? quote.values.length + 1 : 11).setValue('CONVERTED');
 
+      let orderReference = '';
+      if (postData.startProduction === true && items.some(isProductionItem)) {
+        orderReference = createDocumentReference('ORD');
+        const invoiceData = documentResponse(findDocument(ss, 'invoices_log', invoiceReference), 'invoice');
+        getDocumentSheet(ss, 'orders_log').appendRow(documentRecord(invoiceData, orderReference, invoiceReference, 'IN_PRODUCTION', '', ''));
+      }
+
       return ContentService
-        .createTextOutput(JSON.stringify({ status: 'success', documentType: 'invoice', reference: invoiceReference, data: documentResponse(findDocument(ss, 'invoices_log', invoiceReference), 'invoice') }))
+        .createTextOutput(JSON.stringify({ status: 'success', documentType: 'invoice', reference: invoiceReference, orderReference, data: withInvoicePaymentTotals(ss, documentResponse(findDocument(ss, 'invoices_log', invoiceReference), 'invoice')) }))
         .setMimeType(ContentService.MimeType.JSON);
     }
 
-    // Invoice -> Receipt (payment confirmation), which immediately opens a production Order.
+    // Every confirmed payment creates its own receipt and updates the invoice balance.
     if (postData.action === 'confirm_invoice_payment') {
       const invoice = findDocument(ss, 'invoices_log', postData.invoiceReference);
       if (!invoice) throw new Error('Invoice not found: ' + postData.invoiceReference);
-      const invoiceData = documentResponse(invoice, 'invoice');
-      if (invoiceData.status === 'PAID') {
-        throw new Error('This invoice has already been paid.');
+      const invoiceData = withInvoicePaymentTotals(ss, documentResponse(invoice, 'invoice'));
+      const paymentRequestId = String(postData.paymentRequestId || '').trim();
+      const duplicateReceipt = findReceiptByPaymentRequest(ss, invoiceData.reference, paymentRequestId);
+      if (duplicateReceipt) {
+        return ContentService
+          .createTextOutput(JSON.stringify({ status: 'success', documentType: 'receipt', reference: duplicateReceipt.values[1], orderReference: '', data: documentResponse(duplicateReceipt, 'receipt'), idempotent: true }))
+          .setMimeType(ContentService.MimeType.JSON);
       }
-      if (findDocumentByParent(ss, 'receipts_log', invoiceData.reference)) {
-        throw new Error('A receipt has already been recorded for this invoice.');
-      }
-
-      invoice.sheet.getRange(invoice.rowNumber, 11).setValue('PAID');
+      if (invoiceData.balance <= 0) throw new Error('This invoice has already been fully paid.');
+      const requestedAmount = postData.paymentAmount === undefined || String(postData.paymentAmount).trim() === ''
+        ? invoiceData.balance
+        : Number(postData.paymentAmount);
+      if (!Number.isFinite(requestedAmount) || requestedAmount <= 0) throw new Error('Payment amount must be greater than zero.');
+      if (requestedAmount - invoiceData.balance > 0.005) throw new Error('Payment amount cannot exceed the outstanding balance.');
+      const paymentAmount = Math.min(requestedAmount, invoiceData.balance);
+      const cumulativePaid = Number(invoiceData.amountPaid || 0) + paymentAmount;
+      const balance = Math.max(0, Number(invoiceData.total || 0) - cumulativePaid);
+      const nextInvoiceStatus = balance <= 0.005 ? 'PAID' : 'PARTIALLY_PAID';
+      invoice.sheet.getRange(invoice.rowNumber, 11).setValue(nextInvoiceStatus);
       invoice.sheet.getRange(invoice.rowNumber, 12).setValue(postData.paymentMethod || '');
       invoice.sheet.getRange(invoice.rowNumber, 13).setValue(postData.paymentReference || '');
 
+      const previousOrderStatus = getInvoiceOrderStatus(ss, invoiceData.reference);
       const receiptReference = createDocumentReference('RCT');
       const receiptSheet = getDocumentSheet(ss, 'receipts_log');
-      receiptSheet.appendRow(documentRecord({ ...invoiceData, items: invoiceData.items }, receiptReference, invoiceData.reference, 'PAID', postData.paymentMethod, postData.paymentReference));
-
-      // Only jobs flagged for production enter the production queue after payment.
       const productionItems = (invoiceData.items || []).filter(isProductionItem);
+      const receiptMetadata = JSON.stringify({
+        paymentAmount,
+        cumulativePaid,
+        balance,
+        paymentRequestId,
+        orderCompleted: previousOrderStatus === 'COMPLETED',
+        requiresProduction: productionItems.length > 0
+      });
+      const receiptItems = [{
+        title: `Payment toward invoice ${invoiceData.reference}`,
+        quantity: 1,
+        unitPrice: paymentAmount,
+        total: paymentAmount,
+        mode: '',
+        size: ''
+      }];
+      receiptSheet.appendRow(documentRecord({
+        ...invoiceData,
+        items: receiptItems,
+        subtotal: paymentAmount,
+        discount: 0,
+        total: paymentAmount,
+        taxBreakdown: receiptMetadata
+      }, receiptReference, invoiceData.reference, 'PAID', postData.paymentMethod, postData.paymentReference));
+
       let orderReference = '';
-      if (productionItems.length) {
+      if (productionItems.length && !previousOrderStatus) {
         orderReference = createDocumentReference('ORD');
         const orderSheet = getDocumentSheet(ss, 'orders_log');
         orderSheet.appendRow(documentRecord({ ...invoiceData, items: invoiceData.items }, orderReference, receiptReference, 'IN_PRODUCTION', postData.paymentMethod, postData.paymentReference));
       }
+      SpreadsheetApp.flush();
 
       return ContentService
         .createTextOutput(JSON.stringify({
           status: 'success', documentType: 'receipt', reference: receiptReference, orderReference: orderReference,
-          data: documentResponse(findDocument(ss, 'receipts_log', receiptReference), 'receipt')
+          data: documentResponse(findDocument(ss, 'receipts_log', receiptReference), 'receipt'),
+          invoice: withInvoicePaymentTotals(ss, documentResponse(findDocument(ss, 'invoices_log', invoiceData.reference), 'invoice'))
         }))
+        .setMimeType(ContentService.MimeType.JSON);
+    }
+
+    if (postData.action === 'start_invoice_production') {
+      if (!isValidStaffPassword(ss, postData.staffPassword)) {
+        return ContentService
+          .createTextOutput(JSON.stringify({ status: 'error', message: 'Staff authorization required.' }))
+          .setMimeType(ContentService.MimeType.JSON);
+      }
+      const invoice = findDocument(ss, 'invoices_log', postData.invoiceReference);
+      if (!invoice) throw new Error('Invoice not found: ' + postData.invoiceReference);
+      const invoiceData = withInvoicePaymentTotals(ss, documentResponse(invoice, 'invoice'));
+      if (invoiceData.balance <= 0) throw new Error('This invoice is already fully paid; its production should have started when payment was recorded.');
+      if (!(invoiceData.items || []).some(isProductionItem)) throw new Error('This invoice has no items requiring production.');
+      const existingOrder = getInvoiceOrderRecord(ss, invoiceData.reference);
+      if (existingOrder) {
+        if (String(existingOrder.values[10] || '') === 'COMPLETED') throw new Error('This order is already completed.');
+        return ContentService
+          .createTextOutput(JSON.stringify({ status: 'success', alreadyStarted: true, orderReference: existingOrder.values[1] }))
+          .setMimeType(ContentService.MimeType.JSON);
+      }
+      const orderReference = createDocumentReference('ORD');
+      getDocumentSheet(ss, 'orders_log').appendRow(documentRecord(invoiceData, orderReference, invoiceData.reference, 'IN_PRODUCTION', '', ''));
+      SpreadsheetApp.flush();
+      return ContentService
+        .createTextOutput(JSON.stringify({ status: 'success', orderReference, data: documentResponse(findDocument(ss, 'orders_log', orderReference), 'order') }))
         .setMimeType(ContentService.MimeType.JSON);
     }
 
@@ -694,8 +856,10 @@ function doPost(e) {
       for (const source of sources) {
         const record = findDocument(ss, source[0], reference);
         if (record) {
+          let data = documentResponse(record, source[1]);
+          if (source[1] === 'invoice') data = withInvoicePaymentTotals(ss, data);
           return ContentService
-            .createTextOutput(JSON.stringify({ status: 'success', data: documentResponse(record, source[1]) }))
+            .createTextOutput(JSON.stringify({ status: 'success', data }))
             .setMimeType(ContentService.MimeType.JSON);
         }
       }
