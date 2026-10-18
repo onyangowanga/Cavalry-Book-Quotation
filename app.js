@@ -100,13 +100,20 @@ window.addEventListener('beforeinstallprompt', event => {
 
 window.addEventListener('appinstalled', () => {
   deferredInstallPrompt = null;
+  rememberPWAInstalled();
   const button = document.getElementById('installAppButton');
   if (button) button.hidden = true;
   document.getElementById('installAppStatus').textContent = 'App installed.';
 });
 
+function rememberPWAInstalled() {
+  try { localStorage.setItem('cavalry-pwa-installed', 'true'); } catch (error) {}
+}
+
 function isAppInstalled() {
-  return window.matchMedia('(display-mode: standalone)').matches || navigator.standalone === true;
+  let installedInBrowser = false;
+  try { installedInBrowser = localStorage.getItem('cavalry-pwa-installed') === 'true'; } catch (error) {}
+  return window.matchMedia('(display-mode: standalone)').matches || navigator.standalone === true || installedInBrowser;
 }
 
 function updateInstallAvailability() {
@@ -133,7 +140,9 @@ async function installPWA() {
   }
   deferredInstallPrompt.prompt();
   const choice = await deferredInstallPrompt.userChoice;
+  if (choice.outcome === 'accepted') rememberPWAInstalled();
   status.textContent = choice.outcome === 'accepted' ? 'Installing app…' : 'Installation cancelled.';
+  if (choice.outcome === 'accepted') document.getElementById('installAppButton').hidden = true;
   deferredInstallPrompt = null;
 }
 
