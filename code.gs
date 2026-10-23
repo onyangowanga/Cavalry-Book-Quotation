@@ -19,6 +19,7 @@ function getStaffCredentials(ss) {
 function isValidStaffPassword(ss, password) {
   const supplied = String(password || '').trim();
   if (!supplied) return false;
+  if (supplied.startsWith('SESSION-')) return Boolean(CacheService.getScriptCache().get(supplied));
   return getStaffCredentials(ss).some(entry => entry.password === supplied);
 }
 
@@ -303,6 +304,43 @@ function hasDeliveryForOrder(ss, orderReference) {
   return Boolean(findDocumentByParent(ss, 'deliveries_log', orderReference));
 }
 
+function getReminderHistory(ss) {
+  const sheet = ss.getSheetByName('reminders_log');
+  if (!sheet || sheet.getLastRow() < 2) return [];
+  return sheet.getRange(2, 1, sheet.getLastRow() - 1, 9).getDisplayValues().map(row => ({
+    timestamp: row[0], invoiceReference: row[1], event: row[2], dueDate: row[3],
+    promisedDate: row[4], snoozeUntil: row[5], message: row[6], requestId: row[7], staff: row[8]
+  }));
+}
+
+function appendReminderEvent(ss, event) {
+  let sheet = ss.getSheetByName('reminders_log');
+  if (!sheet) {
+    sheet = ss.insertSheet('reminders_log');
+    sheet.appendRow(['Timestamp', 'Invoice Reference', 'Event', 'Due Date', 'Promised Date', 'Snooze Until', 'Message', 'Request ID', 'Staff']);
+  }
+  sheet.appendRow([new Date().toISOString(), event.invoiceReference, event.event, event.dueDate || '',
+    event.promisedDate || '', event.snoozeUntil || '', event.message || '', event.requestId || '', event.staff || 'Staff']);
+}
+
+function reminderInvoice(ss, reference) {
+  const invoice = findDocument(ss, 'invoices_log', reference);
+  if (!invoice) throw new Error('Invoice not found.');
+  const data = withInvoicePaymentTotals(ss, documentResponse(invoice, 'invoice'));
+  if (data.balance <= 0) throw new Error('This invoice is fully paid. No payment reminder is needed.');
+  return data;
+}
+
+function validateReminderDate(value) {
+  const text = String(value || '').trim();
+  if (!text) return '';
+  const parsed = new Date(text + 'T12:00:00Z');
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(text) || !Number.isFinite(parsed.getTime()) || parsed.toISOString().slice(0, 10) !== text) {
+    throw new Error('Enter a valid reminder date.');
+  }
+  return text;
+}
+
 function findReceiptByPaymentRequest(ss, invoiceReference, paymentRequestId) {
   if (!paymentRequestId) return null;
   const sheet = ss.getSheetByName('receipts_log');
@@ -476,9 +514,18 @@ function doPost(e) {
 
     if (postData.action === 'login') {
       const isValid = verifyStaffCredentials(ss, postData.username, postData.password);
+      const sessionToken = isValid ? 'SESSION-' + Utilities.getUuid() + Utilities.getUuid() : '';
+      if (sessionToken) CacheService.getScriptCache().put(sessionToken, String(postData.username).trim(), 21600);
       return ContentService
-        .createTextOutput(JSON.stringify({ status: isValid ? 'success' : 'error', message: isValid ? 'Login successful.' : 'Incorrect username or password.' }))
+        .createTextOutput(JSON.stringify({ status: isValid ? 'success' : 'error', sessionToken, expiresAt: Date.now() + 21600000, message: isValid ? 'Login successful.' : 'Incorrect username or password.' }))
         .setMimeType(ContentService.MimeType.JSON);
+    }
+
+    if (postData.action === 'restore_session' || postData.action === 'logout_session') {
+      const token = String(postData.staffPassword || '');
+      const username = token.startsWith('SESSION-') ? CacheService.getScriptCache().get(token) : null;
+      if (postData.action === 'logout_session' && username) CacheService.getScriptCache().remove(token);
+      return ContentService.createTextOutput(JSON.stringify({ status: username ? 'success' : 'error', username: username || '' })).setMimeType(ContentService.MimeType.JSON);
     }
 
     // -------------------------------------------------------------
@@ -579,7 +626,7 @@ function doPost(e) {
         ]);
         record.sheet.getRange(record.rowNumber, 11).setValue(existingInvoice.amountPaid > 0 ? 'PARTIALLY_PAID' : 'PENDING');
         if (productionOrder) {
-          const updatedProductionItems = items.map(item => ({ ...item, printed: false }));
+          const updatedProductionItems = items.map(item => ({ ...item, printed: false, productionStageIndex: 0 }));
           productionOrder.sheet.getRange(productionOrder.rowNumber, 4, 1, 6).setValues([
             [clientName, clientPhone, JSON.stringify(updatedProductionItems), subtotal, discount, total]
           ]);
@@ -757,7 +804,7 @@ function doPost(e) {
     }
 
     // Mark an individual production line printed and finish its order when every book line is done.
-    if (postData.action === 'mark_order_item_printed') {
+    if (['mark_order_item_printed', 'set_production_stages', 'advance_production_stage'].includes(postData.action)) {
       if (!isValidStaffPassword(ss, postData.staffPassword)) {
         return ContentService
           .createTextOutput(JSON.stringify({ status: 'error', message: 'Staff authorization required.' }))
@@ -772,7 +819,25 @@ function doPost(e) {
       if (!Number.isInteger(itemIndex) || itemIndex < 0 || itemIndex >= items.length || !isProductionItem(items[itemIndex])) {
         throw new Error('Invalid production item.');
       }
-      items[itemIndex].printed = true;
+      const item = items[itemIndex];
+      const stages = Array.isArray(item.productionStages) ? item.productionStages : [];
+      const stageIndex = Number(item.productionStageIndex || 0);
+      if (postData.action === 'set_production_stages') {
+        if (item.printed || stageIndex > 0) throw new Error('Stages cannot be changed after production progress has been recorded.');
+        if (!Array.isArray(postData.stages) || postData.stages.length > 12) throw new Error('Specify at most 12 stages.');
+        const newStages = postData.stages.map(stage => String(stage).trim());
+        if (newStages.some(stage => !stage || stage.length > 60)) throw new Error('Stage names must contain 1 to 60 characters.');
+        item.productionStages = newStages;
+        item.productionStageIndex = 0;
+      } else if (postData.action === 'advance_production_stage') {
+        if (!stages.length) throw new Error('This production item has no configured stages.');
+        if (item.printed || Number(postData.expectedStageIndex) !== stageIndex) throw new Error('Production progress changed. Refresh the queue before continuing.');
+        item.productionStageIndex = stageIndex + 1;
+        item.printed = item.productionStageIndex >= stages.length;
+      } else {
+        if (stages.length) throw new Error('Complete the configured stages in order.');
+        item.printed = true;
+      }
       order.sheet.getRange(order.rowNumber, 6).setValue(JSON.stringify(items));
       const productionItems = items.filter(isProductionItem);
       let deliveryReference = '';
@@ -817,6 +882,52 @@ function doPost(e) {
       return ContentService
         .createTextOutput(JSON.stringify({ status: 'success', documentType: 'delivery', reference: deliveryReference, data: documentResponse(findDocument(ss, 'deliveries_log', deliveryReference), 'delivery') }))
         .setMimeType(ContentService.MimeType.JSON);
+    }
+
+    if (['list_reminders', 'schedule_reminder', 'prepare_reminder', 'confirm_reminder_sent'].includes(postData.action)) {
+      if (!isValidStaffPassword(ss, postData.staffPassword)) throw new Error('Staff authorization required.');
+      const authValue = String(postData.staffPassword || '');
+      const staff = authValue.startsWith('SESSION-') ? CacheService.getScriptCache().get(authValue) : 'Staff';
+      const history = getReminderHistory(ss);
+      if (postData.action === 'list_reminders') {
+        const schedules = new Map();
+        history.filter(entry => entry.event === 'SCHEDULE').forEach(entry => schedules.set(entry.invoiceReference, entry));
+        const invoices = listDocumentsFromSheet(ss, 'invoices_log', 'invoice').filter(invoice => invoice.balance > 0).map(invoice => {
+          const order = getInvoiceOrderRecord(ss, invoice.reference);
+          const completed = Boolean(order && (String(order.values[10]) === 'COMPLETED' || hasDeliveryForOrder(ss, order.values[1])));
+          const sent = history.filter(entry => entry.invoiceReference === invoice.reference && entry.event === 'SENT');
+          return { ...invoice, orderCompleted: completed, reminderSchedule: schedules.get(invoice.reference) || {},
+            lastReminderAt: sent.length ? sent[sent.length - 1].timestamp : '', reminderCount: sent.length };
+        });
+        invoices.sort((first, second) => Number(second.orderCompleted) - Number(first.orderCompleted) || new Date(first.timestamp) - new Date(second.timestamp));
+        return ContentService.createTextOutput(JSON.stringify({ status: 'success', data: invoices, history })).setMimeType(ContentService.MimeType.JSON);
+      }
+      if (postData.action === 'confirm_reminder_sent') {
+        const requestId = String(postData.requestId || '');
+        const existing = history.find(entry => entry.event === 'SENT' && entry.requestId === requestId);
+        if (existing) return ContentService.createTextOutput(JSON.stringify({ status: 'success', alreadyRecorded: true })).setMimeType(ContentService.MimeType.JSON);
+        const cached = CacheService.getScriptCache().get('reminder-' + requestId);
+        if (!cached) throw new Error('This reminder preview expired. Prepare a fresh reminder.');
+        const draft = JSON.parse(cached);
+        if (draft.authValue !== authValue) throw new Error('This reminder belongs to another staff session.');
+        appendReminderEvent(ss, { ...draft, event: 'SENT', staff });
+        SpreadsheetApp.flush();
+        return ContentService.createTextOutput(JSON.stringify({ status: 'success' })).setMimeType(ContentService.MimeType.JSON);
+      }
+      const invoice = reminderInvoice(ss, postData.invoiceReference);
+      if (postData.action === 'schedule_reminder') {
+        appendReminderEvent(ss, { invoiceReference: invoice.reference, event: 'SCHEDULE',
+          dueDate: validateReminderDate(postData.dueDate), promisedDate: validateReminderDate(postData.promisedDate),
+          snoozeUntil: validateReminderDate(postData.snoozeUntil), staff });
+        SpreadsheetApp.flush();
+        return ContentService.createTextOutput(JSON.stringify({ status: 'success' })).setMimeType(ContentService.MimeType.JSON);
+      }
+      const schedule = history.filter(entry => entry.event === 'SCHEDULE' && entry.invoiceReference === invoice.reference).pop() || {};
+      const money = amount => 'Kshs. ' + Number(amount || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+      const message = `Hello ${invoice.clientName}, a friendly reminder that invoice ${invoice.reference} has an outstanding balance of ${money(invoice.balance)}.\nInvoice total: ${money(invoice.total)}\nPayments received: ${money(invoice.amountPaid)}${schedule.dueDate ? '\nPayment due: ' + schedule.dueDate : ''}${schedule.promisedDate ? '\nAgreed payment date: ' + schedule.promisedDate : ''}\nKindly pay the balance to Till No. 5675635, quoting your invoice reference. If you have already paid, please share the transaction reference for reconciliation. Thank you for your business.`;
+      const requestId = Utilities.getUuid();
+      CacheService.getScriptCache().put('reminder-' + requestId, JSON.stringify({ invoiceReference: invoice.reference, message, requestId, authValue }), 1800);
+      return ContentService.createTextOutput(JSON.stringify({ status: 'success', data: invoice, message, requestId })).setMimeType(ContentService.MimeType.JSON);
     }
 
     if (postData.action === 'list_expenses') {

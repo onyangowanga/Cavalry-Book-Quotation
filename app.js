@@ -68,6 +68,9 @@ let allExpenses = [];
 let expensesRequest = null;
 let editingDocument = null;
 let deferredInstallPrompt = null;
+let reminderInvoices = [];
+let reminderHistory = [];
+let activeReminder = null;
 
 const OFFSET_PAPER_COSTS = {
   'Bond 70': 1100,
@@ -88,8 +91,51 @@ const MASS_COVER_GENERAL_PER_COPY = { A5: 30, A4: 45, A6: 25 };
 const CLIENT_PROFIT_MARKUP = 0.20;
 const ADMIN_PROFIT_MARKUP = 0.20;
 
-window.addEventListener('load', () => { loadCatalog(); updateStaffUI(); calculateClientMassQuote('booklet'); syncTopbarHeight(); updateInstallAvailability(); });
+window.addEventListener('load', () => { restoreCartDraft(); loadCatalog(); updateStaffUI(); restoreStaffSession(); calculateClientMassQuote('booklet'); syncTopbarHeight(); updateInstallAvailability(); });
 window.addEventListener('resize', syncTopbarHeight);
+
+function saveCartDraft() {
+  try {
+    localStorage.setItem('cavalry-cart-v1', JSON.stringify({
+      items: cart, clientName: document.getElementById('clientName').value,
+      clientPhone: document.getElementById('clientPhone').value
+    }));
+  } catch (error) { console.warn('Cart could not be saved on this device:', error); }
+}
+
+function restoreCartDraft() {
+  try {
+    const draft = JSON.parse(localStorage.getItem('cavalry-cart-v1') || 'null');
+    if (!draft) return;
+    cart = Array.isArray(draft.items) ? draft.items.filter(item => item && Number(item.quantity) > 0).map(item => ({ ...item, pricePending: false })) : [];
+    document.getElementById('clientName').value = draft.clientName || '';
+    document.getElementById('clientPhone').value = draft.clientPhone || '';
+  } catch (error) { console.warn('Saved cart could not be restored:', error); }
+}
+
+async function restoreStaffSession() {
+  try {
+    const saved = JSON.parse(sessionStorage.getItem('cavalry-staff-session') || 'null');
+    if (!saved) return;
+    if (!saved.token || saved.expiresAt <= Date.now()) {
+      sessionStorage.removeItem('cavalry-staff-session');
+      return;
+    }
+    const result = await postApi({ action: 'restore_session', staffPassword: saved.token });
+    if (result.status !== 'success') {
+      sessionStorage.removeItem('cavalry-staff-session');
+      return;
+    }
+    staffPassword = saved.token;
+    staffUsername = result.username;
+    isStaff = true;
+    updateStaffUI();
+    loadCustomersDirectory();
+  } catch (error) { console.warn('Staff session requires an online connection to restore:', error); }
+}
+
+document.getElementById('clientName').addEventListener('input', saveCartDraft);
+document.getElementById('clientPhone').addEventListener('input', saveCartDraft);
 
 window.addEventListener('beforeinstallprompt', event => {
   event.preventDefault();
@@ -236,7 +282,11 @@ async function submitStaffLogin() {
   try {
     const result = await postApi({ action: 'login', username, password });
     if (result.status !== 'success') throw new Error(result.message || 'Incorrect username or password.');
-    staffPassword = password;
+    staffPassword = result.sessionToken || password;
+    if (result.sessionToken) {
+      try { sessionStorage.setItem('cavalry-staff-session', JSON.stringify({ token: result.sessionToken, expiresAt: result.expiresAt })); }
+      catch (error) { console.warn('Staff session could not be saved:', error); }
+    }
     staffUsername = username;
     isStaff = true;
     closeStaffLoginModal();
@@ -255,6 +305,15 @@ async function submitStaffLogin() {
 }
 
 function logoutStaff() {
+  closePaymentReminder();
+  reminderInvoices = [];
+  reminderHistory = [];
+  if (staffPassword.startsWith('SESSION-')) postApi({ action: 'logout_session', staffPassword }).catch(error => console.warn('Session revocation failed:', error));
+  sessionStorage.removeItem('cavalry-staff-session');
+  sessionStorage.removeItem(DOCUMENTS_CACHE_KEY);
+  allDocuments = [];
+  allExpenses = [];
+  document.getElementById('customerNamesList').innerHTML = '';
   isStaff = false;
   staffPassword = '';
   staffUsername = '';
@@ -307,7 +366,7 @@ function updateStaffUI() {
     displayBooks(query ? catalog.filter(b => `${b.title} ${b.author}`.toLowerCase().includes(query)) : catalog);
   }
   renderCart();
-  if (!isStaff && ['offset', 'documents', 'production', 'expenses', 'finance', 'jobquote'].includes(activeAppTab)) switchAppTab('mass');
+  if (!isStaff && ['offset', 'documents', 'production', 'expenses', 'finance', 'jobquote', 'reminders'].includes(activeAppTab)) switchAppTab('mass');
   syncTopbarHeight();
 }
 
@@ -325,6 +384,7 @@ function switchAppTab(tabName) {
   const expensesPanel = document.getElementById('expensesTabPanel');
   const financePanel = document.getElementById('financeTabPanel');
   const jobQuotePanel = document.getElementById('jobQuoteTabPanel');
+  const remindersPanel = document.getElementById('remindersTabPanel');
   const catalogueButton = document.getElementById('catalogueTabButton');
   const massButton = document.getElementById('massTabButton');
   const offsetButton = document.getElementById('offsetTabButton');
@@ -332,12 +392,12 @@ function switchAppTab(tabName) {
   const productionButton = document.getElementById('productionTabButton');
   const expensesButton = document.getElementById('expensesTabButton');
   const financeButton = document.getElementById('financeTabButton');
-  const adminTabs = ['offset', 'documents', 'production', 'expenses', 'finance', 'jobquote'];
+  const adminTabs = ['offset', 'documents', 'production', 'expenses', 'finance', 'jobquote', 'reminders'];
   const requestedTab = adminTabs.includes(tabName) && !isStaff ? 'mass' : tabName;
   activeAppTab = requestedTab;
-  const panelsByName = { catalogue: cataloguePanel, mass: massPanel, offset: offsetPanel, documents: documentsPanel, production: productionPanel, expenses: expensesPanel, finance: financePanel, jobquote: jobQuotePanel };
+  const panelsByName = { catalogue: cataloguePanel, mass: massPanel, offset: offsetPanel, documents: documentsPanel, production: productionPanel, expenses: expensesPanel, finance: financePanel, jobquote: jobQuotePanel, reminders: remindersPanel };
   const activePanel = panelsByName[requestedTab] || cataloguePanel;
-  [cataloguePanel, massPanel, offsetPanel, documentsPanel, productionPanel, expensesPanel, financePanel, jobQuotePanel].forEach(panel => {
+  [cataloguePanel, massPanel, offsetPanel, documentsPanel, productionPanel, expensesPanel, financePanel, jobQuotePanel, remindersPanel].forEach(panel => {
     if (!panel) return;
     const isActive = panel === activePanel;
     panel.hidden = !isActive;
@@ -345,7 +405,7 @@ function switchAppTab(tabName) {
   });
   [[catalogueButton, 'catalogue'], [massButton, 'mass'], [offsetButton, 'offset'], [documentsButton, 'documents'], [productionButton, 'production'], [expensesButton, 'expenses'], [financeButton, 'finance']].forEach(([button, name]) => {
     if (!button) return;
-    const isActive = name === requestedTab || (name === 'documents' && requestedTab === 'jobquote');
+    const isActive = name === requestedTab || (name === 'documents' && ['jobquote', 'reminders'].includes(requestedTab));
     button.classList.toggle('is-active', isActive);
     button.setAttribute('aria-selected', String(isActive));
   });
@@ -353,7 +413,200 @@ function switchAppTab(tabName) {
   if (requestedTab === 'production') loadProductionQueue();
   if (requestedTab === 'expenses') loadExpensesTab();
   if (requestedTab === 'finance') loadFinancials();
+  if (requestedTab === 'reminders') loadPaymentReminders();
 }
+
+async function loadPaymentReminders() {
+  if (!isStaff) return;
+  const button = document.getElementById('refreshRemindersButton');
+  if (button.disabled) return;
+  const token = staffPassword;
+  button.disabled = true;
+  const status = document.getElementById('remindersStatus');
+  status.textContent = 'Checking outstanding balances...';
+  try {
+    const result = await postApi({ action: 'list_reminders', staffPassword: token });
+    if (!isStaff || token !== staffPassword) return;
+    if (result.status !== 'success') throw new Error(result.message || 'Reminders could not be loaded.');
+    reminderInvoices = result.data || [];
+    reminderHistory = result.history || [];
+    renderPaymentReminders();
+    status.textContent = `Balances checked ${new Date().toLocaleTimeString()}. Completed orders appear first.`;
+  } catch (error) {
+    status.textContent = error.message || 'Connect to refresh payment reminders.';
+  } finally { button.disabled = false; }
+}
+
+function renderPaymentReminders() {
+  const today = currentFinanceDate();
+  const filter = document.getElementById('reminderFilter').value;
+  const query = document.getElementById('reminderSearch').value.trim().toLowerCase();
+  const invoices = reminderInvoices.filter(invoice => {
+    const schedule = invoice.reminderSchedule || {};
+    const snoozed = Boolean(schedule.snoozeUntil && schedule.snoozeUntil > today);
+    const due = schedule.promisedDate || schedule.dueDate;
+    if (query && !`${invoice.reference} ${invoice.clientName}`.toLowerCase().includes(query)) return false;
+    if (filter === 'ready') return !snoozed;
+    if (filter === 'completed') return invoice.orderCompleted;
+    if (filter === 'overdue') return !snoozed && due && due < today;
+    if (filter === 'snoozed') return snoozed;
+    return true;
+  });
+  document.getElementById('remindersTableBody').innerHTML = invoices.length ? invoices.map(invoice => {
+    const schedule = invoice.reminderSchedule || {};
+    return `<tr>
+      <td data-label="Invoice / client">${escapeHtml(invoice.reference)}<br>${escapeHtml(invoice.clientName)}</td>
+      <td data-label="Order">${invoice.orderCompleted ? 'Completed / issued for collection' : 'Open / no completed order'}</td>
+      <td data-label="Total / paid">Total ${formatKshs(invoice.total)}<br>Paid ${formatKshs(invoice.amountPaid)}</td>
+      <td data-label="Balance"><strong>${formatKshs(invoice.balance)}</strong></td>
+      <td data-label="Dates">Due: ${escapeHtml(schedule.dueDate || 'Not set')}<br>Promised: ${escapeHtml(schedule.promisedDate || 'Not set')}<br>Snooze: ${escapeHtml(schedule.snoozeUntil || 'Not set')}</td>
+      <td data-label="Last reminder">${invoice.lastReminderAt ? escapeHtml(new Date(invoice.lastReminderAt).toLocaleString()) : 'Never'}<br>${Number(invoice.reminderCount || 0)} sent</td>
+      <td data-label="Actions"><div class="documents-row-actions"><button type="button" data-reminder-reference="${escapeHtml(invoice.reference)}">Reminder / history</button><button type="button" data-reminder-invoice="${escapeHtml(invoice.reference)}">View invoice</button></div></td>
+    </tr>`;
+  }).join('') : '<tr><td colspan="7" class="documents-empty">No outstanding invoices match this view.</td></tr>';
+}
+
+document.getElementById('remindersTableBody').addEventListener('click', event => {
+  const button = event.target.closest('button');
+  if (!button) return;
+  if (button.dataset.reminderReference) openPaymentReminder(button.dataset.reminderReference);
+  if (button.dataset.reminderInvoice) viewReminderInvoice(button.dataset.reminderInvoice);
+});
+
+async function viewReminderInvoice(reference) {
+  if (!isStaff) return;
+  try {
+    const result = await postApi({ action: 'get_document_data', reference });
+    if (result.status !== 'success') throw new Error(result.message || 'Invoice could not be loaded.');
+    currentDocument = result.data;
+    openDocumentPreview();
+  } catch (error) { document.getElementById('remindersStatus').textContent = error.message; }
+}
+
+function renderReminderHistory(reference) {
+  const history = reminderHistory.filter(entry => entry.invoiceReference === reference).slice().reverse();
+  document.getElementById('reminderHistory').innerHTML = history.length ? history.map(entry => {
+    const stamp = escapeHtml(new Date(entry.timestamp).toLocaleString());
+    return entry.event === 'SENT'
+      ? `<details><summary>${stamp} · Sent (staff confirmed) · ${escapeHtml(entry.staff)}</summary><pre>${escapeHtml(entry.message)}</pre></details>`
+      : `<p>${stamp} · Dates updated · Due: ${escapeHtml(entry.dueDate || 'Not set')} · Promised: ${escapeHtml(entry.promisedDate || 'Not set')} · Snooze: ${escapeHtml(entry.snoozeUntil || 'Not set')}</p>`;
+  }).join('') : '<p>No reminder history yet.</p>';
+}
+
+async function openPaymentReminder(reference) {
+  if (!isStaff) return;
+  closeDocumentPreview();
+  const invoice = reminderInvoices.find(entry => entry.reference === reference);
+  if (!invoice) return;
+  const schedule = invoice.reminderSchedule || {};
+  activeReminder = { reference, requestId: '', opened: false };
+  const active = activeReminder;
+  document.getElementById('reminderTitle').textContent = `Reminder ${reference}`;
+  document.getElementById('reminderPhone').value = invoice.clientPhone || '';
+  document.getElementById('reminderDueDate').value = schedule.dueDate || '';
+  document.getElementById('reminderPromisedDate').value = schedule.promisedDate || '';
+  document.getElementById('reminderSnoozeUntil').value = schedule.snoozeUntil || '';
+  document.getElementById('reminderMessage').value = '';
+  document.getElementById('confirmReminderSentButton').disabled = true;
+  document.getElementById('openReminderWhatsAppButton').disabled = true;
+  document.getElementById('reminderModalStatus').textContent = 'Checking the latest balance...';
+  renderReminderHistory(reference);
+  document.getElementById('reminderModal').style.display = 'flex';
+  try {
+    const result = await postApi({ action: 'prepare_reminder', invoiceReference: reference, staffPassword });
+    if (activeReminder !== active || !isStaff) return;
+    if (result.status !== 'success') throw new Error(result.message || 'Reminder could not be prepared.');
+    active.requestId = result.requestId;
+    document.getElementById('reminderMessage').value = result.message;
+    document.getElementById('reminderModalStatus').textContent = `Current balance: ${formatKshs(result.data.balance)}. WhatsApp has not been opened.`;
+    document.getElementById('openReminderWhatsAppButton').disabled = false;
+  } catch (error) { if (activeReminder === active) document.getElementById('reminderModalStatus').textContent = error.message; }
+}
+
+function closePaymentReminder() {
+  activeReminder = null;
+  document.getElementById('reminderModal').style.display = 'none';
+}
+
+async function saveReminderSchedule() {
+  if (!isStaff || !activeReminder) return;
+  const active = activeReminder;
+  const status = document.getElementById('reminderModalStatus');
+  status.textContent = 'Saving reminder dates...';
+  try {
+    const result = await postApi({ action: 'schedule_reminder', invoiceReference: active.reference, staffPassword,
+      dueDate: document.getElementById('reminderDueDate').value, promisedDate: document.getElementById('reminderPromisedDate').value,
+      snoozeUntil: document.getElementById('reminderSnoozeUntil').value });
+    if (result.status !== 'success') throw new Error(result.message || 'Reminder dates could not be saved.');
+    await loadPaymentReminders();
+    if (activeReminder === active) await openPaymentReminder(active.reference);
+  } catch (error) { status.textContent = error.message; }
+}
+
+async function openReminderWhatsApp() {
+  if (!isStaff || !activeReminder) return;
+  let phone = document.getElementById('reminderPhone').value.replace(/\D/g, '');
+  if (phone.startsWith('00')) phone = phone.slice(2);
+  if (/^0\d{9}$/.test(phone)) phone = '254' + phone.slice(1);
+  if (/^[17]\d{8}$/.test(phone)) phone = '254' + phone;
+  const status = document.getElementById('reminderModalStatus');
+  if (!/^[1-9]\d{9,14}$/.test(phone)) {
+    status.textContent = 'Enter a valid WhatsApp number, including country code for non-Kenyan numbers.';
+    return;
+  }
+  const popup = window.open('about:blank', '_blank');
+  if (!popup) { status.textContent = 'Allow pop-ups, then try again. Nothing has been logged as sent.'; return; }
+  popup.opener = null;
+  const active = activeReminder;
+  document.getElementById('openReminderWhatsAppButton').disabled = true;
+  document.getElementById('confirmReminderSentButton').disabled = true;
+  try {
+    const result = await postApi({ action: 'prepare_reminder', invoiceReference: active.reference, staffPassword });
+    if (activeReminder !== active || !isStaff) { popup.close(); return; }
+    if (result.status !== 'success') throw new Error(result.message || 'Could not check the current balance.');
+    if (result.message !== document.getElementById('reminderMessage').value) {
+      popup.close();
+      document.getElementById('reminderMessage').value = result.message;
+      status.textContent = 'The balance or reminder dates changed. Review the updated message and open WhatsApp again.';
+      document.getElementById('openReminderWhatsAppButton').disabled = false;
+      return;
+    }
+    active.requestId = result.requestId;
+    popup.location.href = `https://wa.me/${phone}?text=${encodeURIComponent(result.message)}`;
+    active.opened = true;
+    document.getElementById('confirmReminderSentButton').disabled = false;
+    status.textContent = 'WhatsApp opened. After you send the message, select Confirm sent to record it.';
+  } catch (error) {
+    popup.close();
+    status.textContent = error.message;
+    if (activeReminder === active) document.getElementById('openReminderWhatsAppButton').disabled = false;
+  }
+}
+
+async function confirmReminderSent() {
+  if (!isStaff || !activeReminder?.opened) return;
+  const active = activeReminder;
+  const button = document.getElementById('confirmReminderSentButton');
+  const status = document.getElementById('reminderModalStatus');
+  button.disabled = true;
+  try {
+    const result = await postApi({ action: 'confirm_reminder_sent', requestId: active.requestId, staffPassword });
+    if (result.status !== 'success') throw new Error(result.message || 'Could not record this reminder.');
+    active.opened = false;
+    await loadPaymentReminders();
+    if (activeReminder === active) {
+      renderReminderHistory(active.reference);
+      status.textContent = 'Reminder recorded as sent. Invoice and payment records are unchanged.';
+    }
+  } catch (error) { status.textContent = error.message; button.disabled = false; }
+}
+
+document.getElementById('reminderModal').addEventListener('click', event => {
+  if (event.target.id === 'reminderModal') closePaymentReminder();
+});
+document.addEventListener('keydown', event => {
+  if (event.key === 'Escape') closePaymentReminder();
+});
 
 function addJobQuoteLine(originalItem = null) {
   const lines = document.getElementById('jobQuoteLines');
@@ -1556,15 +1809,52 @@ function renderProductionQueue() {
     body.innerHTML = '<tr><td colspan="7" class="documents-empty">No books are currently in production.</td></tr>';
     return;
   }
-  body.innerHTML = productionItems.map(({ order, item, itemIndex }) => `<tr>
+  body.innerHTML = productionItems.map(({ order, item, itemIndex }) => {
+    const stages = Array.isArray(item.productionStages) ? item.productionStages : [];
+    const stageIndex = Number(item.productionStageIndex || 0);
+    const stageName = stages[stageIndex] || '';
+    const stageStatus = item.printed ? 'COMPLETED' : stages.length ? `${stageName} (${stageIndex + 1}/${stages.length})` : 'TO PRINT';
+    return `<tr>
     <td data-label="Order">${escapeHtml(order.reference)}</td>
     <td data-label="Client">${escapeHtml(order.clientName || 'Valued Client')}</td>
     <td data-label="Book">${escapeHtml(item.title || item.name || 'Untitled book')}</td>
     <td data-label="Quantity">${Number(item.quantity || 1)}</td>
     <td data-label="Specifications">${escapeHtml([item.mode, item.size, item.pages ? `${item.pages} pages` : ''].filter(Boolean).join(' · '))}</td>
-    <td data-label="Print status"><span class="document-status-tag ${item.printed ? 'is-paid' : 'is-pending'}">${item.printed ? 'PRINTED' : 'TO PRINT'}</span></td>
-    <td data-label="Action"><button class="production-print-button" type="button" onclick="markProductionItemPrinted('${escapeHtml(order.reference)}', ${itemIndex})" ${item.printed ? 'disabled' : ''}>${item.printed ? 'Printed' : 'Mark printed'}</button></td>
-  </tr>`).join('');
+    <td data-label="Progress"><span class="document-status-tag ${item.printed ? 'is-paid' : 'is-pending'}">${escapeHtml(stageStatus)}</span></td>
+    <td data-label="Action"><div class="documents-row-actions">
+      ${!item.printed && stageIndex === 0 ? `<button type="button" onclick="configureProductionStages('${escapeHtml(order.reference)}', ${itemIndex})">${stages.length ? 'Edit stages' : 'Set stages'}</button>` : ''}
+      <button class="production-print-button" type="button" onclick="${stages.length ? 'advanceProductionStage' : 'markProductionItemPrinted'}('${escapeHtml(order.reference)}', ${itemIndex}${stages.length ? `, ${stageIndex}` : ''})" ${item.printed ? 'disabled' : ''}>${item.printed ? 'Completed' : stages.length ? `Finish ${escapeHtml(stageName)}` : 'Mark printed'}</button>
+    </div></td>
+  </tr>`;
+  }).join('');
+}
+
+async function configureProductionStages(orderReference, itemIndex) {
+  if (!isStaff) return;
+  const order = allDocuments.find(doc => doc.type === 'order' && doc.reference === orderReference);
+  const item = order?.items?.[itemIndex];
+  if (!item) return;
+  const value = prompt('Enter stages in order, separated by commas (e.g. Printing, Binding, Packaging). Leave blank for Mark printed only.', (item.productionStages || []).join(', '));
+  if (value === null) return;
+  const stages = value.trim() ? value.split(',').map(stage => stage.trim()) : [];
+  await updateProductionStage({ action: 'set_production_stages', orderReference, itemIndex, stages });
+}
+
+async function advanceProductionStage(orderReference, itemIndex, expectedStageIndex) {
+  await updateProductionStage({ action: 'advance_production_stage', orderReference, itemIndex, expectedStageIndex });
+}
+
+async function updateProductionStage(payload) {
+  if (!isStaff) return;
+  try {
+    const result = await postApi({ ...payload, staffPassword });
+    if (result.status !== 'success') throw new Error(result.message || 'Could not update production stages.');
+    await loadDocumentsTracker();
+    renderProductionQueue();
+    if (result.completed) alert(`All production items are complete. Delivery note ${result.deliveryReference} created.`);
+  } catch (error) {
+    alert(error.message || 'Could not update production stages.');
+  }
 }
 
 async function markProductionItemPrinted(orderReference, itemIndex) {
@@ -2047,6 +2337,7 @@ function updateCartFab() {
 }
 
 function renderCart() {
+  saveCartDraft();
   const container = document.getElementById('cartItems');
   if (cart.length === 0) { 
     container.innerHTML = '<div class="empty-state">Add a book to begin your quote.</div>'; 

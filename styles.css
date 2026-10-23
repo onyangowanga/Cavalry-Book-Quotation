@@ -103,6 +103,15 @@ h1 { font-weight: 700; font-size: clamp(1.8rem, 3vw, 2.45rem); line-height: 1.04
 .documents-search { flex: 1; min-width: 220px; }
 .documents-refresh-group { display: flex; align-items: center; justify-content: flex-end; gap: 10px; min-width: 0; }
 .documents-sync-status { color: var(--muted); font-size: .72rem; text-align: right; }
+.reminder-fields { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 180px), 1fr)); gap: 12px; margin: 12px 0; }
+.reminder-fields input, .reminder-message-field textarea { width: 100%; min-width: 0; padding: 9px 10px; border: 1px solid var(--line); border-radius: 8px; font: inherit; background: #fff; color: var(--ink); }
+.reminder-message-field { display: block; margin-top: 16px; }
+.reminder-message-field textarea { resize: vertical; font-size: .82rem; line-height: 1.5; }
+.reminder-history-heading { margin: 18px 0 8px; }
+.reminder-history { font-size: .76rem; overflow-wrap: anywhere; }
+.reminder-history p { padding: 8px 0; border-bottom: 1px solid var(--line); }
+.reminder-history details { padding: 8px 0; border-bottom: 1px solid var(--line); }
+.reminder-history pre { white-space: pre-wrap; overflow-wrap: anywhere; font: inherit; margin-top: 8px; }
 .finance-month-field { display: grid; gap: 4px; min-width: 150px; }
 .finance-month-field input, .finance-month-field select, .expense-entry-form input, .expense-entry-form select { width: 100%; min-width: 0; padding: 9px 10px; border: 1px solid var(--line); border-radius: 8px; background: #fff; color: var(--ink); }
 .finance-custom-range { display: flex; flex-wrap: wrap; gap: 8px; }

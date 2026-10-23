@@ -224,6 +224,7 @@
         </div>
       </div>
       <nav class="admin-dashboard-grid" aria-label="Admin pages">
+        <a class="admin-dashboard-card" href="#reminders" onclick="event.preventDefault(); switchAppTab('reminders');"><span class="admin-dashboard-card-icon" aria-hidden="true">$</span><span class="admin-dashboard-card-copy"><strong>Payment reminders</strong></span><span class="admin-dashboard-card-arrow" aria-hidden="true">→</span></a>
         <a class="admin-dashboard-card" href="#documentRecords" onclick="event.preventDefault(); document.getElementById('documentRecords').scrollIntoView({behavior:'smooth'});"><span class="admin-dashboard-card-icon" aria-hidden="true">▤</span><span class="admin-dashboard-card-copy"><strong>Documents &amp; accounts</strong><small>Quotes, invoices, receipts and delivery notes</small></span><span class="admin-dashboard-card-arrow" aria-hidden="true">→</span></a>
         <a class="admin-dashboard-card" href="#jobquote" onclick="event.preventDefault(); switchAppTab('jobquote');"><span class="admin-dashboard-card-icon" aria-hidden="true">＋</span><span class="admin-dashboard-card-copy"><strong>Other-job quotation</strong><small>Quote services and work outside the book catalogue</small></span><span class="admin-dashboard-card-arrow" aria-hidden="true">→</span></a>
         <a class="admin-dashboard-card" href="#production" onclick="event.preventDefault(); switchAppTab('production');"><span class="admin-dashboard-card-icon" aria-hidden="true">▣</span><span class="admin-dashboard-card-copy"><strong>Production</strong><small>Track book lines and mark printing complete</small></span><span class="admin-dashboard-card-arrow" aria-hidden="true">→</span></a>
@@ -254,6 +255,25 @@
       </div>
     </section>
 
+    <section id="remindersTabPanel" class="tab-panel documents-panel" role="tabpanel" aria-labelledby="remindersTitle" hidden>
+      <div class="offset-heading">
+        <div><div class="eyebrow">Admin · Collections</div><h2 id="remindersTitle">Payment reminders</h2></div>
+        <div class="documents-refresh-group">
+          <button class="refresh-btn" type="button" onclick="switchAppTab('documents')">Admin dashboard</button>
+          <button id="refreshRemindersButton" class="refresh-btn" type="button" onclick="loadPaymentReminders()">Refresh balances</button>
+        </div>
+      </div>
+      <div class="documents-toolbar">
+        <label class="finance-month-field"><span class="field-label">Show</span><select id="reminderFilter" onchange="renderPaymentReminders()"><option value="ready">Ready to remind</option><option value="completed">Completed orders, unpaid</option><option value="overdue">Overdue</option><option value="snoozed">Snoozed</option><option value="all">All outstanding</option></select></label>
+        <label class="finance-month-field"><span class="field-label">Search</span><input id="reminderSearch" type="search" autocomplete="off" placeholder="Client or invoice reference" oninput="renderPaymentReminders()"></label>
+      </div>
+      <p id="remindersStatus" class="checkout-status" role="status" aria-live="polite"></p>
+      <div class="documents-table-wrap"><table class="documents-table">
+        <thead><tr><th>Invoice / client</th><th>Order</th><th>Total / paid</th><th>Balance</th><th>Due / promised</th><th>Last reminder</th><th>Actions</th></tr></thead>
+        <tbody id="remindersTableBody"><tr><td colspan="7" class="documents-empty">No reminders loaded.</td></tr></tbody>
+      </table></div>
+    </section>
+
     <section id="productionTabPanel" class="tab-panel documents-panel" role="tabpanel" aria-labelledby="productionTabButton" hidden>
       <div class="offset-heading">
         <div>
@@ -269,7 +289,7 @@
       </div>
       <div class="documents-table-wrap">
         <table class="documents-table production-table">
-          <thead><tr><th>Order</th><th>Client</th><th>Book</th><th>Qty</th><th>Specifications</th><th>Print status</th><th>Action</th></tr></thead>
+          <thead><tr><th>Order</th><th>Client</th><th>Book</th><th>Qty</th><th>Specifications</th><th>Progress</th><th>Action</th></tr></thead>
           <tbody id="productionTableBody"><tr><td colspan="7" class="documents-empty">Loading production queue...</td></tr></tbody>
         </table>
       </div>
@@ -414,6 +434,26 @@
         <button class="continue-btn" type="button" onclick="closePaymentModal()">Back to invoice</button>
         <button class="custom-btn" type="button" id="submitInvoicePaymentButton" onclick="submitInvoicePaymentFromModal()">Record payment</button>
       </div>
+    </div>
+  </div>
+
+  <div id="reminderModal" class="modal-overlay checkout-overlay" role="dialog" aria-modal="true" aria-labelledby="reminderTitle">
+    <div class="checkout-modal-card reminder-modal-card">
+      <div class="modal-header"><h3 id="reminderTitle">Payment reminder</h3><button class="modal-close-button" type="button" aria-label="Close reminder" onclick="closePaymentReminder()">&times;</button></div>
+      <div class="reminder-fields">
+        <label><span class="field-label">WhatsApp phone</span><input id="reminderPhone" type="tel" autocomplete="off"></label>
+        <label><span class="field-label">Payment due date</span><input id="reminderDueDate" type="date"></label>
+        <label><span class="field-label">Promised payment date</span><input id="reminderPromisedDate" type="date"></label>
+        <label><span class="field-label">Snooze until</span><input id="reminderSnoozeUntil" type="date"></label>
+      </div>
+      <button class="refresh-btn" type="button" onclick="saveReminderSchedule()">Save dates</button>
+      <label class="reminder-message-field"><span class="field-label">Message preview</span><textarea id="reminderMessage" rows="9" readonly></textarea></label>
+      <p id="reminderModalStatus" class="checkout-status" role="status" aria-live="polite"></p>
+      <div class="checkout-modal-actions">
+        <button id="openReminderWhatsAppButton" class="whatsapp-btn" type="button" onclick="openReminderWhatsApp()">Open WhatsApp</button>
+        <button id="confirmReminderSentButton" class="custom-btn" type="button" onclick="confirmReminderSent()" disabled>Confirm sent</button>
+      </div>
+      <h4 class="reminder-history-heading">Reminder history</h4><div id="reminderHistory" class="reminder-history"></div>
     </div>
   </div>
 
