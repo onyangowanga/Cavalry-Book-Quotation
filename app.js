@@ -1,4 +1,5 @@
 const API_URL = "https://script.google.com/macros/s/AKfycbx9xaPSdNyEa51Lws0iEBobfHrh4ZqAw4R5QO5YJi680D1B-S1HlRdrTxMi5QdXTccXEA/exec";
+const CATALOG_API_URL = "https://api.cavalrypublishers.co.ke/api/v1/catalog";
 const COMPANY_WHATSAPP = "254726953346"; // Replace with your primary business WhatsApp phone number
 const TILL_NUMBER = "5675635"; // Buy Goods till number clients pay to
 
@@ -211,22 +212,30 @@ function loadCatalog() {
       const current = Number(progressBar.dataset.progress || 8);
       showCatalogProgress(Math.min(90, current + (current < 45 ? 7 : 3)), current < 35 ? 'Fetching catalogue data...' : 'Preparing book listings...');
     }, 350);
-    // Cache-bust so a manual refresh always pulls the latest sheet data instead of a cached response.
-    fetch(`${API_URL}?t=${Date.now()}`, { redirect: 'follow', cache: 'no-store' })
-        .then(res => {
-        if (!res.ok) throw new Error('Network response was not ok');
+    const fetchCatalog = (url, options = {}) => fetch(url, { redirect: 'follow', cache: 'no-store', ...options })
+      .then(res => {
+        if (!res.ok) throw new Error(`Catalogue request failed with HTTP ${res.status}.`);
         return res.json();
+      })
+      .then(response => {
+        if (response.status !== 'success' || !Array.isArray(response.data)) {
+          throw new Error(response.message || 'The catalogue response was invalid.');
+        }
+        return response;
+      });
+
+    fetchCatalog(CATALOG_API_URL, { signal: AbortSignal.timeout(6000) })
+    .catch(apiError => {
+      console.warn('Catalogue API unavailable; falling back to Google Sheets:', apiError);
+      // Cache-bust the fallback so a manual refresh gets the latest source-of-truth data.
+      return fetchCatalog(`${API_URL}?t=${Date.now()}`);
     })
     .then(response => {
-        if (response.status === 'success') { 
-          showCatalogProgress(100, 'Catalogue ready');
-            rawCatalog = sortCatalogue(response.data);
-            catalog = rawCatalog;
-            displayBooks(catalog); 
-            populateBookSuggestions(catalog);
-        } else {
-            showCatalogError('The catalogue could not be loaded: ' + (response.message || 'Unknown error'));
-        }
+        showCatalogProgress(100, 'Catalogue ready');
+        rawCatalog = sortCatalogue(response.data);
+        catalog = rawCatalog;
+        displayBooks(catalog);
+        populateBookSuggestions(catalog);
     })
     .catch(err => {
         console.error('Catalogue Load Error:', err);

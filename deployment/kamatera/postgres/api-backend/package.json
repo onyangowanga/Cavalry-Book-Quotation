@@ -1,0 +1,16 @@
+{
+  "name": "cavalry-books-api",
+  "version": "1.0.0",
+  "private": true,
+  "description": "PostgreSQL-backed catalogue API with Google Sheets fallback synchronization",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "start": "node server.js",
+    "test": "node --test"
+  },
+  "dependencies": {
+    "pg": "8.13.1"
+  }
+}
