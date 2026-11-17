@@ -13,8 +13,10 @@ services:
       PGPORT: "5432"
       PGPASSWORD: ${POSTGRES_PASSWORD}
       CATALOG_SOURCE_URL: https://script.google.com/macros/s/AKfycbx9xaPSdNyEa51Lws0iEBobfHrh4ZqAw4R5QO5YJi680D1B-S1HlRdrTxMi5QdXTccXEA/exec
-      CORS_ORIGINS: https://cavalrypublishers.co.ke
+      CORS_ORIGINS: https://cavalrypublishers.co.ke,https://api.cavalrypublishers.co.ke
       SYNC_INTERVAL_MS: "300000"
+      ADMIN_READ_CACHE_TTL_MS: "120000"
+      PAYMENT_SMS_CACHE_TTL_MS: "15000"
     ports:
       - "127.0.0.1:3100:3000"
     networks:

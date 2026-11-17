@@ -2,7 +2,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { validateCatalogue } = require('./server');
+const { adminReadCacheKey, getBearerToken, validateCatalogue } = require('./server');
 
 test('accepts catalogue records from Apps Script', () => {
   const input = [{ id: 2, title: 'Book', unitCost: 500, author: 'Writer' }];
@@ -22,4 +22,17 @@ test('rejects duplicate IDs and invalid prices', () => {
     { id: 1, title: 'Second', unitCost: 2 }
   ]), /duplicate book IDs/);
   assert.throws(() => validateCatalogue([{ id: 1, title: 'Bad price', unitCost: 'invalid' }]), /invalid required fields/);
+});
+
+test('allows only supported admin read actions and isolates document cache keys', () => {
+  assert.equal(adminReadCacheKey('list_documents', {}), 'list_documents');
+  assert.equal(adminReadCacheKey('get_document_data', { reference: 'INV-123' }), 'get_document_data:INV-123');
+  assert.throws(() => adminReadCacheKey('confirm_invoice_payment', {}), /not supported/);
+  assert.throws(() => adminReadCacheKey('get_document_data', { reference: ' ' }), /reference is required/);
+});
+
+test('accepts only opaque Apps Script staff session tokens for API authorization', () => {
+  assert.equal(getBearerToken({ headers: { authorization: 'Bearer SESSION-abc-123' } }), 'SESSION-abc-123');
+  assert.equal(getBearerToken({ headers: { authorization: 'Bearer staff-password' } }), '');
+  assert.equal(getBearerToken({ headers: {} }), '');
 });

@@ -9,6 +9,12 @@
   <link rel="icon" href="favicon/favicon.ico">
   <link rel="apple-touch-icon" sizes="180x180" href="favicon/apple-touch-icon.png">
   <link rel="manifest" href="manifest.json">
+  <script>
+    if (location.pathname.startsWith('/admin/')) {
+      document.documentElement.classList.add('admin-portal-route');
+      document.querySelector('link[rel="manifest"]').remove();
+    }
+  </script>
   <title>Cavalry Publishers | Quote Builder</title>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.16.105/pdf.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
@@ -220,7 +226,7 @@
         </div>
         <div class="documents-refresh-group">
           <span id="documentsSyncStatus" class="documents-sync-status" role="status" aria-live="polite"></span>
-          <button class="refresh-btn" type="button" onclick="loadDocumentsTracker()">Refresh</button>
+          <button class="refresh-btn" type="button" onclick="loadDocumentsTracker(true)">Refresh</button>
         </div>
       </div>
       <nav class="admin-dashboard-grid" aria-label="Admin pages">
@@ -239,7 +245,7 @@
           <div class="documents-refresh-group">
             <label class="payment-sms-filter"><span class="field-label">Show</span><select id="paymentSmsFilter" onchange="setPaymentSmsFilter(this.value)"><option value="PENDING" selected>Pending</option><option value="VERIFIED">Verified</option><option value="LINKED">Linked</option><option value="IGNORED">Ignored</option><option value="ALL">All messages</option></select></label>
             <span id="paymentSmsSyncStatus" class="documents-sync-status" role="status" aria-live="polite"></span>
-            <button class="refresh-btn" type="button" onclick="loadPaymentSmsInbox()">Refresh messages</button>
+            <button class="refresh-btn" type="button" onclick="loadPaymentSmsInbox(true)">Refresh messages</button>
           </div>
         </div>
         <div class="documents-table-wrap">
@@ -277,7 +283,7 @@
         <div><div class="eyebrow">Admin · Collections</div><h2 id="remindersTitle">Payment reminders</h2></div>
         <div class="documents-refresh-group">
           <button class="refresh-btn" type="button" onclick="switchAppTab('documents')">Admin dashboard</button>
-          <button id="refreshRemindersButton" class="refresh-btn" type="button" onclick="loadPaymentReminders()">Refresh balances</button>
+          <button id="refreshRemindersButton" class="refresh-btn" type="button" onclick="loadPaymentReminders(true)">Refresh balances</button>
         </div>
       </div>
       <div class="documents-toolbar">
@@ -301,7 +307,7 @@
         <div class="documents-refresh-group">
           <button class="refresh-btn" type="button" onclick="switchAppTab('documents')">Admin dashboard</button>
           <span id="productionQueueCount" class="documents-sync-status" role="status" aria-live="polite"></span>
-          <button class="refresh-btn" type="button" onclick="loadProductionQueue()">Refresh queue</button>
+          <button class="refresh-btn" type="button" onclick="loadProductionQueue(true)">Refresh queue</button>
         </div>
       </div>
       <div class="documents-table-wrap">
@@ -345,7 +351,7 @@
         <div class="documents-refresh-group">
           <button class="refresh-btn" type="button" onclick="switchAppTab('documents')">Admin dashboard</button>
           <span id="expenseStatus" class="documents-sync-status" role="status" aria-live="polite"></span>
-          <button class="refresh-btn" type="button" onclick="loadExpensesTab()">Refresh expenses</button>
+          <button class="refresh-btn" type="button" onclick="loadExpensesTab(true)">Refresh expenses</button>
         </div>
       </div>
       <section class="expense-entry-section">

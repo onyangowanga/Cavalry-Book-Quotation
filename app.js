@@ -1,7 +1,15 @@
 const API_URL = "https://script.google.com/macros/s/AKfycbx9xaPSdNyEa51Lws0iEBobfHrh4ZqAw4R5QO5YJi680D1B-S1HlRdrTxMi5QdXTccXEA/exec";
 const CATALOG_API_URL = "https://api.cavalrypublishers.co.ke/api/v1/catalog";
+const ADMIN_API_URL = "https://api.cavalrypublishers.co.ke/api/v1/admin";
 const COMPANY_WHATSAPP = "254726953346"; // Replace with your primary business WhatsApp phone number
 const TILL_NUMBER = "5675635"; // Buy Goods till number clients pay to
+const ADMIN_MUTATION_ACTIONS = new Set([
+  'add_expense', 'advance_production_stage', 'complete_order', 'confirm_invoice_payment',
+  'confirm_reminder_sent', 'convert_quote_to_invoice', 'delete_quotation',
+  'link_payment_sms_to_invoice', 'mark_order_item_printed', 'schedule_reminder',
+  'set_production_stages', 'start_invoice_production', 'update_document',
+  'update_payment_sms_status'
+]);
 
 // Central fetch wrapper: surfaces a clear message instead of a raw JSON-parse crash when the
 // Apps Script URL 404s, redirects to a sign-in page, or otherwise responds with non-JSON HTML.
@@ -18,10 +26,69 @@ async function postApi(payload) {
   }
   const text = await response.text();
   try {
-    return JSON.parse(text);
+    const result = JSON.parse(text);
+    const sessionToken = String(payload.staffPassword || staffPassword);
+    if (result.status === 'success' && ADMIN_MUTATION_ACTIONS.has(payload.action) && sessionToken.startsWith('SESSION-')) {
+      try {
+        const invalidation = await fetch(`${ADMIN_API_URL}/invalidate`, {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${sessionToken}` },
+          signal: AbortSignal.timeout(3000)
+        });
+        if (!invalidation.ok) {
+          console.warn('Admin data cache invalidation returned HTTP', invalidation.status);
+        }
+      } catch (error) {
+        console.warn('Admin data cache could not be invalidated; fresh reads will still use Apps Script:', error);
+      }
+    }
+    return result;
   } catch (parseError) {
     throw new Error(`The server is unreachable right now (HTTP ${response.status}). The Apps Script deployment link may be outdated - please contact the admin.`);
   }
+}
+
+async function registerAdminApiSession(token, expiresAt) {
+  const response = await fetch(`${ADMIN_API_URL}/session`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ staffPassword: token, expiresAt }),
+    signal: AbortSignal.timeout(25000)
+  });
+  const result = await response.json();
+  if (!response.ok || result.status !== 'success') {
+    throw new Error(result.message || 'The VPS admin read session could not be registered.');
+  }
+  return result;
+}
+
+async function readAdminData(payload, forceRefresh = false) {
+  if (!isStaff || !staffPassword.startsWith('SESSION-')) return postApi(payload);
+  try {
+    const response = await fetch(`${ADMIN_API_URL}/read`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${staffPassword}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({ ...payload, forceRefresh }),
+      signal: AbortSignal.timeout(25000)
+    });
+    const result = await response.json();
+    if (!response.ok || result.status !== 'success') {
+      throw new Error(result.message || `VPS admin read failed with HTTP ${response.status}.`);
+    }
+    return result;
+  } catch (error) {
+    console.warn('VPS admin read unavailable; falling back to Apps Script:', error);
+    return postApi(payload);
+  }
+}
+
+function getAdminReadStatus(result, label = 'Updated') {
+  const updatedAt = result.cacheUpdatedAt ? new Date(result.cacheUpdatedAt) : new Date();
+  const time = updatedAt.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  return result.cacheSource === 'postgresql-cache' ? `VPS cache · ${time}` : `${label} ${time}`;
 }
 
 // drive.google.com/thumbnail links are blocked by CORS; googleusercontent.com serves the same image without that restriction.
@@ -50,6 +117,7 @@ let catalogProgressTimer;
 let catalogueView = 'grid';
 const quotationNumber = `CAV-${new Date().toISOString().slice(0, 10).replace(/-/g, '')}-${Math.floor(1000 + Math.random() * 9000)}`;
 const MINIMUM_ORDER_AMOUNT = 500;
+const IS_ADMIN_PORTAL = location.pathname.startsWith('/admin/');
 
 let isStaff = false;
 let staffPassword = '';
@@ -96,7 +164,26 @@ const MASS_COVER_GENERAL_PER_COPY = { A5: 30, A4: 45, A6: 25 };
 const CLIENT_PROFIT_MARKUP = 0.20;
 const ADMIN_PROFIT_MARKUP = 0.20;
 
-window.addEventListener('load', () => { restoreCartDraft(); loadCatalog(); updateStaffUI(); restoreStaffSession(); calculateClientMassQuote('booklet'); syncTopbarHeight(); updateInstallAvailability(); });
+if (IS_ADMIN_PORTAL) {
+  document.body.classList.add('admin-portal');
+  document.title = 'Cavalry Publishers | Admin';
+  document.querySelector('.intro h2').textContent = 'Admin workspace';
+  document.querySelector('.intro p').textContent = 'Documents, payments and business operations.';
+  document.getElementById('installAppButton').hidden = true;
+}
+
+window.addEventListener('load', async () => {
+  if (!IS_ADMIN_PORTAL) {
+    restoreCartDraft();
+    loadCatalog();
+    calculateClientMassQuote('booklet');
+  }
+  updateStaffUI();
+  const restored = await restoreStaffSession();
+  if (IS_ADMIN_PORTAL && !restored) openStaffLoginModal();
+  syncTopbarHeight();
+  updateInstallAvailability();
+});
 window.addEventListener('resize', syncTopbarHeight);
 
 function saveCartDraft() {
@@ -121,22 +208,32 @@ function restoreCartDraft() {
 async function restoreStaffSession() {
   try {
     const saved = JSON.parse(sessionStorage.getItem('cavalry-staff-session') || 'null');
-    if (!saved) return;
+    if (!saved) return false;
     if (!saved.token || saved.expiresAt <= Date.now()) {
       sessionStorage.removeItem('cavalry-staff-session');
-      return;
+      return false;
     }
     const result = await postApi({ action: 'restore_session', staffPassword: saved.token });
     if (result.status !== 'success') {
       sessionStorage.removeItem('cavalry-staff-session');
-      return;
+      return false;
     }
     staffPassword = saved.token;
     staffUsername = result.username;
     isStaff = true;
+    try {
+      await registerAdminApiSession(staffPassword, saved.expiresAt);
+    } catch (error) {
+      console.warn('VPS admin reads will use Apps Script until its session is available:', error);
+    }
     updateStaffUI();
     loadCustomersDirectory();
-  } catch (error) { console.warn('Staff session requires an online connection to restore:', error); }
+    if (IS_ADMIN_PORTAL) switchAppTab('documents');
+    return true;
+  } catch (error) {
+    console.warn('Staff session requires an online connection to restore:', error);
+    return false;
+  }
 }
 
 document.getElementById('clientName').addEventListener('input', saveCartDraft);
@@ -299,11 +396,17 @@ async function submitStaffLogin() {
     if (result.sessionToken) {
       try { sessionStorage.setItem('cavalry-staff-session', JSON.stringify({ token: result.sessionToken, expiresAt: result.expiresAt })); }
       catch (error) { console.warn('Staff session could not be saved:', error); }
+      try {
+        await registerAdminApiSession(result.sessionToken, result.expiresAt);
+      } catch (error) {
+        console.warn('VPS admin reads will use Apps Script until its session is available:', error);
+      }
     }
     staffUsername = username;
     isStaff = true;
     closeStaffLoginModal();
     updateStaffUI();
+    if (IS_ADMIN_PORTAL) switchAppTab('documents');
     loadCustomersDirectory();
   } catch (error) {
     console.error('Staff login failed:', error);
@@ -321,7 +424,11 @@ function logoutStaff() {
   closePaymentReminder();
   reminderInvoices = [];
   reminderHistory = [];
-  if (staffPassword.startsWith('SESSION-')) postApi({ action: 'logout_session', staffPassword }).catch(error => console.warn('Session revocation failed:', error));
+  if (staffPassword.startsWith('SESSION-')) {
+    fetch(`${ADMIN_API_URL}/logout`, { method: 'POST', headers: { Authorization: `Bearer ${staffPassword}` } })
+      .catch(error => console.warn('VPS admin session revocation failed:', error));
+    postApi({ action: 'logout_session', staffPassword }).catch(error => console.warn('Session revocation failed:', error));
+  }
   sessionStorage.removeItem('cavalry-staff-session');
   sessionStorage.removeItem(DOCUMENTS_CACHE_KEY);
   allDocuments = [];
@@ -333,13 +440,14 @@ function logoutStaff() {
   staffUsername = '';
   customersDirectory = [];
   updateStaffUI();
+  if (IS_ADMIN_PORTAL) openStaffLoginModal();
 }
 
 // Lets staff autofill a returning client's phone number the moment they pick a saved name.
 async function loadCustomersDirectory() {
   if (!isStaff) return;
   try {
-    const result = await postApi({ action: 'list_customers', staffPassword });
+    const result = await readAdminData({ action: 'list_customers', staffPassword });
     if (result.status !== 'success') throw new Error(result.message || 'Customers could not be loaded.');
     customersDirectory = result.data || [];
     const datalist = document.getElementById('customerNamesList');
@@ -357,6 +465,8 @@ function applyCustomerAutofill(nameFieldId, phoneFieldId, selectedName) {
 }
 
 function updateStaffUI() {
+  document.body.classList.toggle('staff-authenticated', isStaff);
+  if (IS_ADMIN_PORTAL) document.documentElement.classList.toggle('admin-portal-authenticated', isStaff);
   const loginButton = document.getElementById('staffLoginButton');
   const logoutButton = document.getElementById('staffLogoutButton');
   const offsetTabButton = document.getElementById('offsetTabButton');
@@ -432,7 +542,7 @@ function switchAppTab(tabName) {
   if (requestedTab === 'reminders') loadPaymentReminders();
 }
 
-async function loadPaymentSmsInbox() {
+async function loadPaymentSmsInbox(forceRefresh = false) {
   if (!isStaff) return;
   if (paymentSmsRequest) return paymentSmsRequest;
   const tableBody = document.getElementById('paymentSmsTableBody');
@@ -443,12 +553,12 @@ async function loadPaymentSmsInbox() {
 
   paymentSmsRequest = (async () => {
     try {
-      const result = await postApi({ action: 'list_payment_sms', staffPassword: token });
+      const result = await readAdminData({ action: 'list_payment_sms', staffPassword: token }, forceRefresh);
       if (!isStaff || token !== staffPassword) return;
       if (result.status !== 'success') throw new Error(result.message || 'Forwarded messages could not be loaded.');
       paymentSmsEntries = Array.isArray(result.data) ? result.data : [];
       renderPaymentSmsInbox();
-      if (syncStatus) syncStatus.textContent = `Updated ${new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`;
+      if (syncStatus) syncStatus.textContent = getAdminReadStatus(result);
     } catch (error) {
       console.error('Loading forwarded payment SMS failed:', error);
       if (syncStatus) syncStatus.textContent = error.message || 'Messages unavailable.';
@@ -604,7 +714,7 @@ async function updatePaymentSmsStatus(id, reviewStatus) {
   }
 }
 
-async function loadPaymentReminders() {
+async function loadPaymentReminders(forceRefresh = false) {
   if (!isStaff) return;
   const button = document.getElementById('refreshRemindersButton');
   if (button.disabled) return;
@@ -613,13 +723,13 @@ async function loadPaymentReminders() {
   const status = document.getElementById('remindersStatus');
   status.textContent = 'Checking outstanding balances...';
   try {
-    const result = await postApi({ action: 'list_reminders', staffPassword: token });
+    const result = await readAdminData({ action: 'list_reminders', staffPassword: token }, forceRefresh);
     if (!isStaff || token !== staffPassword) return;
     if (result.status !== 'success') throw new Error(result.message || 'Reminders could not be loaded.');
     reminderInvoices = result.data || [];
     reminderHistory = result.history || [];
     renderPaymentReminders();
-    status.textContent = `Balances checked ${new Date().toLocaleTimeString()}. Completed orders appear first.`;
+    status.textContent = `${result.cacheSource === 'postgresql-cache' ? 'VPS cached balances' : 'Balances checked'} ${new Date(result.cacheUpdatedAt || Date.now()).toLocaleTimeString()}. Completed orders appear first.`;
   } catch (error) {
     status.textContent = error.message || 'Connect to refresh payment reminders.';
   } finally { button.disabled = false; }
@@ -664,7 +774,7 @@ document.getElementById('remindersTableBody').addEventListener('click', event =>
 async function viewReminderInvoice(reference) {
   if (!isStaff) return;
   try {
-    const result = await postApi({ action: 'get_document_data', reference });
+    const result = await readAdminData({ action: 'get_document_data', reference });
     if (result.status !== 'success') throw new Error(result.message || 'Invoice could not be loaded.');
     currentDocument = result.data;
     openDocumentPreview();
@@ -1914,7 +2024,7 @@ async function confirmCurrentInvoicePayment() {
 }
 
 // Admin-only: loads every quote/order/invoice/receipt for the tracking & accounting tab.
-async function loadDocumentsTracker() {
+async function loadDocumentsTracker(forceRefresh = false) {
   if (!isStaff) return;
   const tableBody = document.getElementById('documentsTableBody');
   const syncStatus = document.getElementById('documentsSyncStatus');
@@ -1944,7 +2054,7 @@ async function loadDocumentsTracker() {
 
   documentsRequest = (async () => {
   try {
-    const result = await postApi({ action: 'list_documents', staffPassword });
+    const result = await readAdminData({ action: 'list_documents', staffPassword }, forceRefresh);
     if (result.status !== 'success') throw new Error(result.message || 'Documents could not be loaded.');
     allDocuments = result.data || [];
     try {
@@ -1954,7 +2064,7 @@ async function loadDocumentsTracker() {
     }
     renderAccountingSummary();
     renderDocumentsTable();
-    if (syncStatus) syncStatus.textContent = `Updated ${new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`;
+    if (syncStatus) syncStatus.textContent = getAdminReadStatus(result);
   } catch (error) {
     console.error('Loading documents failed:', error);
     if (allDocuments.length) {
@@ -1976,9 +2086,9 @@ function isProductionBookItem(item) {
   return Boolean(item.mode || item.pages || item.size);
 }
 
-async function loadProductionQueue() {
+async function loadProductionQueue(forceRefresh = false) {
   if (!isStaff) return;
-  await loadDocumentsTracker();
+  await loadDocumentsTracker(forceRefresh);
   renderProductionQueue();
 }
 
@@ -2122,25 +2232,25 @@ async function loadFinancials() {
   renderMonthlyFinance();
 }
 
-async function loadExpensesTab() {
+async function loadExpensesTab(forceRefresh = false) {
   if (!isStaff) return;
-  await loadExpenses();
+  await loadExpenses(forceRefresh);
   renderExpensesTable(allExpenses);
 }
 
-async function loadExpenses() {
+async function loadExpenses(forceRefresh = false) {
   if (!isStaff) return;
   if (expensesRequest) return expensesRequest;
   const status = document.getElementById('expenseStatus');
   if (status) status.textContent = 'Loading expenses...';
   expensesRequest = (async () => {
     try {
-      const result = await postApi({ action: 'list_expenses', staffPassword });
+      const result = await readAdminData({ action: 'list_expenses', staffPassword }, forceRefresh);
       if (result.status !== 'success') throw new Error(result.message || 'Expenses could not be loaded.');
       allExpenses = result.data || [];
       renderMonthlyFinance();
       if (activeAppTab === 'expenses') renderExpensesTable(allExpenses);
-      if (status) status.textContent = '';
+      if (status) status.textContent = result.cacheSource === 'postgresql-cache' ? getAdminReadStatus(result, 'Cached') : '';
     } catch (error) {
       console.error('Expense load failed:', error);
       if (status) status.textContent = error.message || 'Expenses could not be loaded.';
@@ -2992,7 +3102,7 @@ async function applyCustomBookChoices() {
 
 function escapeHtml(str) { return String(str ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;'); }
 
-if ('serviceWorker' in navigator && location.protocol !== 'file:') {
+if ('serviceWorker' in navigator && location.protocol !== 'file:' && !IS_ADMIN_PORTAL) {
   window.addEventListener('load', async () => {
     try {
       const reg = await navigator.serviceWorker.register('./sw.js', { scope: './' });

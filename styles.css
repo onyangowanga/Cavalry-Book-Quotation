@@ -514,3 +514,14 @@ h1 { font-weight: 700; font-size: clamp(1.8rem, 3vw, 2.45rem); line-height: 1.04
   body > *:not(.print-quote) { display: none !important; }
   .print-quote { display: block; color: var(--ink); }
 }
+
+html.admin-portal-route #catalogueTabButton,
+html.admin-portal-route #massTabButton,
+html.admin-portal-route #catalogueTabPanel,
+html.admin-portal-route #massTabPanel,
+html.admin-portal-route #installAppButton,
+html.admin-portal-route #installAppStatus,
+html.admin-portal-route #cartFab { display: none !important; }
+html.admin-portal-route:not(.admin-portal-authenticated) .app-tabs,
+html.admin-portal-route:not(.admin-portal-authenticated) .tab-panel { display: none !important; }
+html.admin-portal-route.admin-portal-authenticated .app-tabs { display: flex; }
