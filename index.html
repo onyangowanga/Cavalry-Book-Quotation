@@ -225,6 +225,7 @@
       </div>
       <nav class="admin-dashboard-grid" aria-label="Admin pages">
         <a class="admin-dashboard-card" href="#reminders" onclick="event.preventDefault(); switchAppTab('reminders');"><span class="admin-dashboard-card-icon" aria-hidden="true">$</span><span class="admin-dashboard-card-copy"><strong>Payment reminders</strong></span><span class="admin-dashboard-card-arrow" aria-hidden="true">→</span></a>
+        <a class="admin-dashboard-card" href="#paymentSmsRecords" onclick="event.preventDefault(); document.getElementById('paymentSmsRecords').scrollIntoView({behavior:'smooth'});"><span class="admin-dashboard-card-icon" aria-hidden="true">✉</span><span class="admin-dashboard-card-copy"><strong>Forwarded payment SMS</strong><small>Verify, then link a message to an invoice</small></span><span class="admin-dashboard-card-arrow" aria-hidden="true">→</span></a>
         <a class="admin-dashboard-card" href="#documentRecords" onclick="event.preventDefault(); document.getElementById('documentRecords').scrollIntoView({behavior:'smooth'});"><span class="admin-dashboard-card-icon" aria-hidden="true">▤</span><span class="admin-dashboard-card-copy"><strong>Documents &amp; accounts</strong><small>Quotes, invoices, receipts and delivery notes</small></span><span class="admin-dashboard-card-arrow" aria-hidden="true">→</span></a>
         <a class="admin-dashboard-card" href="#jobquote" onclick="event.preventDefault(); switchAppTab('jobquote');"><span class="admin-dashboard-card-icon" aria-hidden="true">＋</span><span class="admin-dashboard-card-copy"><strong>Other-job quotation</strong><small>Quote services and work outside the book catalogue</small></span><span class="admin-dashboard-card-arrow" aria-hidden="true">→</span></a>
         <a class="admin-dashboard-card" href="#production" onclick="event.preventDefault(); switchAppTab('production');"><span class="admin-dashboard-card-icon" aria-hidden="true">▣</span><span class="admin-dashboard-card-copy"><strong>Production</strong><small>Track book lines and mark printing complete</small></span><span class="admin-dashboard-card-arrow" aria-hidden="true">→</span></a>
@@ -232,6 +233,22 @@
         <a class="admin-dashboard-card" href="#financials" onclick="event.preventDefault(); switchAppTab('finance');"><span class="admin-dashboard-card-icon" aria-hidden="true">▥</span><span class="admin-dashboard-card-copy"><strong>Financial reports</strong><small>Monthly receipts, expenses and net cash profit</small></span><span class="admin-dashboard-card-arrow" aria-hidden="true">→</span></a>
         <a class="admin-dashboard-card" href="#offset" onclick="event.preventDefault(); switchAppTab('offset');"><span class="admin-dashboard-card-icon" aria-hidden="true">⌗</span><span class="admin-dashboard-card-copy"><strong>Offset calculator</strong><small>Build and review offset printing estimates</small></span><span class="admin-dashboard-card-arrow" aria-hidden="true">→</span></a>
       </nav>
+      <section id="paymentSmsRecords" class="admin-dashboard-records payment-sms-records">
+        <div class="admin-dashboard-records-heading">
+          <div><h3>Forwarded payment SMS</h3><span>Verify each message first; linking it records a receipt and updates the invoice.</span></div>
+          <div class="documents-refresh-group">
+            <label class="payment-sms-filter"><span class="field-label">Show</span><select id="paymentSmsFilter" onchange="setPaymentSmsFilter(this.value)"><option value="PENDING" selected>Pending</option><option value="VERIFIED">Verified</option><option value="LINKED">Linked</option><option value="IGNORED">Ignored</option><option value="ALL">All messages</option></select></label>
+            <span id="paymentSmsSyncStatus" class="documents-sync-status" role="status" aria-live="polite"></span>
+            <button class="refresh-btn" type="button" onclick="loadPaymentSmsInbox()">Refresh messages</button>
+          </div>
+        </div>
+        <div class="documents-table-wrap">
+          <table class="documents-table">
+            <thead><tr><th>Received</th><th>Transaction code</th><th>Amount</th><th>SMS message</th><th>Status</th><th>Actions</th></tr></thead>
+            <tbody id="paymentSmsTableBody"><tr><td colspan="6" class="documents-empty">Log in and refresh to load forwarded messages.</td></tr></tbody>
+          </table>
+        </div>
+      </section>
       <div id="documentRecords" class="admin-dashboard-records">
         <div class="admin-dashboard-records-heading"><h3>Documents &amp; accounts</h3><span>Recent business activity</span></div>
         <div class="accounting-summary" id="accountingSummary"></div>

@@ -196,6 +196,161 @@ function documentRecord(postData, reference, parentReference, status, paymentMet
   ];
 }
 
+function getPaymentSmsSheet(ss) {
+  const headers = ['Message ID', 'Received At', 'SMS Message', 'Forwarder Time', 'Review Status', 'Reviewed At', 'Linked Invoice', 'Receipt Reference'];
+  let sheet = ss.getSheetByName('payment_sms_inbox');
+  if (!sheet) {
+    sheet = ss.insertSheet('payment_sms_inbox');
+    sheet.appendRow(headers);
+  } else if (sheet.getLastColumn() < headers.length) {
+    sheet.getRange(1, 1, 1, headers.length).setValues([headers]);
+  }
+  return sheet;
+}
+
+function receiveForwardedPaymentSms(ss, postData) {
+  const expectedToken = PropertiesService.getScriptProperties().getProperty('SMS_FORWARDER_TOKEN');
+  const suppliedToken = String(postData.token || postData.secret || '');
+  if (!expectedToken || !suppliedToken || suppliedToken !== expectedToken) {
+    return { status: 'error', message: 'SMS forwarding is not authorized.' };
+  }
+
+  const message = String(postData.message || postData.msg || postData.key || '').trim();
+  const forwardedAt = String(postData.receivedAt || postData.time || '').trim();
+  if (!message) return { status: 'error', message: 'SMS message is required.' };
+  if (message.length > 3000) return { status: 'error', message: 'SMS message is too long.' };
+
+  const messageId = Utilities.base64EncodeWebSafe(
+    Utilities.computeDigest(
+      Utilities.DigestAlgorithm.SHA_256,
+      message + '\n' + forwardedAt,
+      Utilities.Charset.UTF_8
+    )
+  );
+  const sheet = getPaymentSmsSheet(ss);
+  const existingId = sheet.getLastRow() > 1
+    ? sheet.getRange(2, 1, sheet.getLastRow() - 1, 1).createTextFinder(messageId).matchEntireCell(true).findNext()
+    : null;
+  if (existingId) {
+    return { status: 'success', message: 'SMS already received.', duplicate: true };
+  }
+
+  sheet.appendRow([messageId, new Date(), message, forwardedAt, 'PENDING', '']);
+  SpreadsheetApp.flush();
+  return { status: 'success', message: 'SMS saved for staff review.', duplicate: false };
+}
+
+function parseMpesaPaymentSms(message) {
+  const text = String(message || '');
+  const transactionMatch = text.match(/(?:^|[^A-Z0-9])([A-Z0-9]{8,12})\s+Confirmed\b/i);
+  const amountMatch = text.match(/KSHS?\s*([\d,]+(?:\.\d{1,2})?)\s*received\b/i);
+  const amount = amountMatch ? Number(amountMatch[1].replace(/,/g, '')) : null;
+  return {
+    transactionCode: transactionMatch ? transactionMatch[1].toUpperCase() : '',
+    amount: Number.isFinite(amount) && amount > 0 ? amount : null
+  };
+}
+
+function listPaymentSms(ss) {
+  const sheet = ss.getSheetByName('payment_sms_inbox');
+  if (!sheet || sheet.getLastRow() < 2) return [];
+  const lastRow = sheet.getLastRow();
+  const firstRow = Math.max(2, lastRow - 499);
+  const rows = sheet.getRange(firstRow, 1, lastRow - firstRow + 1, 8).getValues();
+  return rows.map(row => {
+    const message = String(row[2] || '');
+    return {
+      id: String(row[0] || ''),
+      receivedAt: row[1] instanceof Date ? row[1].toISOString() : String(row[1] || ''),
+      message,
+      forwardedAt: String(row[3] || ''),
+      status: String(row[4] || 'PENDING'),
+      reviewedAt: row[5] instanceof Date ? row[5].toISOString() : String(row[5] || ''),
+      linkedInvoice: String(row[6] || ''),
+      receiptReference: String(row[7] || ''),
+      parsedPayment: parseMpesaPaymentSms(message)
+    };
+  }).reverse();
+}
+
+function recordInvoicePayment(ss, postData) {
+  const invoice = findDocument(ss, 'invoices_log', postData.invoiceReference);
+  if (!invoice) throw new Error('Invoice not found: ' + postData.invoiceReference);
+  const invoiceData = withInvoicePaymentTotals(ss, documentResponse(invoice, 'invoice'));
+  const paymentRequestId = String(postData.paymentRequestId || '').trim();
+  const duplicateReceipt = findReceiptByPaymentRequest(ss, invoiceData.reference, paymentRequestId);
+  if (duplicateReceipt) {
+    return {
+      status: 'success',
+      documentType: 'receipt',
+      reference: duplicateReceipt.values[1],
+      orderReference: '',
+      data: documentResponse(duplicateReceipt, 'receipt'),
+      invoice: invoiceData,
+      idempotent: true
+    };
+  }
+  if (invoiceData.balance <= 0) throw new Error('This invoice has already been fully paid.');
+  const requestedAmount = postData.paymentAmount === undefined || String(postData.paymentAmount).trim() === ''
+    ? invoiceData.balance
+    : Number(postData.paymentAmount);
+  if (!Number.isFinite(requestedAmount) || requestedAmount <= 0) throw new Error('Payment amount must be greater than zero.');
+  if (requestedAmount - invoiceData.balance > 0.005) throw new Error('Payment amount cannot exceed the outstanding balance.');
+  const paymentAmount = Math.min(requestedAmount, invoiceData.balance);
+  const cumulativePaid = Number(invoiceData.amountPaid || 0) + paymentAmount;
+  const balance = Math.max(0, Number(invoiceData.total || 0) - cumulativePaid);
+  const nextInvoiceStatus = balance <= 0.005 ? 'PAID' : 'PARTIALLY_PAID';
+  invoice.sheet.getRange(invoice.rowNumber, 11).setValue(nextInvoiceStatus);
+  invoice.sheet.getRange(invoice.rowNumber, 12).setValue(postData.paymentMethod || '');
+  invoice.sheet.getRange(invoice.rowNumber, 13).setValue(postData.paymentReference || '');
+
+  const previousOrderStatus = getInvoiceOrderStatus(ss, invoiceData.reference);
+  const receiptReference = createDocumentReference('RCT');
+  const receiptSheet = getDocumentSheet(ss, 'receipts_log');
+  const productionItems = (invoiceData.items || []).filter(isProductionItem);
+  const receiptMetadata = JSON.stringify({
+    paymentAmount,
+    cumulativePaid,
+    balance,
+    paymentRequestId,
+    orderCompleted: previousOrderStatus === 'COMPLETED',
+    requiresProduction: productionItems.length > 0
+  });
+  const receiptItems = [{
+    title: `Payment toward invoice ${invoiceData.reference}`,
+    quantity: 1,
+    unitPrice: paymentAmount,
+    total: paymentAmount,
+    mode: '',
+    size: ''
+  }];
+  receiptSheet.appendRow(documentRecord({
+    ...invoiceData,
+    items: receiptItems,
+    subtotal: paymentAmount,
+    discount: 0,
+    total: paymentAmount,
+    taxBreakdown: receiptMetadata
+  }, receiptReference, invoiceData.reference, 'PAID', postData.paymentMethod, postData.paymentReference));
+
+  let orderReference = '';
+  if (productionItems.length && !previousOrderStatus) {
+    orderReference = createDocumentReference('ORD');
+    const orderSheet = getDocumentSheet(ss, 'orders_log');
+    orderSheet.appendRow(documentRecord({ ...invoiceData, items: invoiceData.items }, orderReference, receiptReference, 'IN_PRODUCTION', postData.paymentMethod, postData.paymentReference));
+  }
+  SpreadsheetApp.flush();
+
+  return {
+    status: 'success',
+    documentType: 'receipt',
+    reference: receiptReference,
+    orderReference,
+    data: documentResponse(findDocument(ss, 'receipts_log', receiptReference), 'receipt'),
+    invoice: withInvoicePaymentTotals(ss, documentResponse(findDocument(ss, 'invoices_log', invoiceData.reference), 'invoice'))
+  };
+}
+
 // Locates a document row by searching for its reference directly (via TextFinder) instead of
 // guessing which column holds it from the row's width - this works reliably for both the new
 // 13-column layout and legacy quotes_log rows (whose reference lives in column H, not B).
@@ -510,7 +665,16 @@ function doPost(e) {
   lock.waitLock(15000);
   try {
     const ss = SpreadsheetApp.getActiveSpreadsheet();
-    const postData = JSON.parse(e.postData.contents);
+    const contentType = String(e.postData && e.postData.type || '').toLowerCase();
+    const postData = contentType.indexOf('application/x-www-form-urlencoded') >= 0
+      ? (e.parameter || {})
+      : JSON.parse(e.postData.contents);
+
+    if (postData.action === 'receive_payment_sms') {
+      return ContentService
+        .createTextOutput(JSON.stringify(receiveForwardedPaymentSms(ss, postData)))
+        .setMimeType(ContentService.MimeType.JSON);
+    }
 
     if (postData.action === 'login') {
       const isValid = verifyStaffCredentials(ss, postData.username, postData.password);
@@ -548,6 +712,42 @@ function doPost(e) {
       }
       return ContentService
         .createTextOutput(JSON.stringify({ status: 'success', data: listCustomers(ss) }))
+        .setMimeType(ContentService.MimeType.JSON);
+    }
+
+    if (postData.action === 'list_payment_sms') {
+      if (!isValidStaffPassword(ss, postData.staffPassword)) {
+        return ContentService
+          .createTextOutput(JSON.stringify({ status: 'error', message: 'Staff authorization required.' }))
+          .setMimeType(ContentService.MimeType.JSON);
+      }
+      return ContentService
+        .createTextOutput(JSON.stringify({ status: 'success', data: listPaymentSms(ss) }))
+        .setMimeType(ContentService.MimeType.JSON);
+    }
+
+    if (postData.action === 'update_payment_sms_status') {
+      if (!isValidStaffPassword(ss, postData.staffPassword)) {
+        return ContentService
+          .createTextOutput(JSON.stringify({ status: 'error', message: 'Staff authorization required.' }))
+          .setMimeType(ContentService.MimeType.JSON);
+      }
+      const messageId = String(postData.id || '').trim();
+      const status = String(postData.reviewStatus || '').trim().toUpperCase();
+      if (!messageId) throw new Error('SMS message ID is required.');
+      if (!['VERIFIED', 'REVIEWED', 'IGNORED'].includes(status)) throw new Error('Choose a valid SMS review status.');
+      const sheet = ss.getSheetByName('payment_sms_inbox');
+      const idCell = sheet && sheet.getLastRow() > 1
+        ? sheet.getRange(2, 1, sheet.getLastRow() - 1, 1).createTextFinder(messageId).matchEntireCell(true).findNext()
+        : null;
+      if (!idCell) throw new Error('SMS message not found.');
+      const currentStatus = String(sheet.getRange(idCell.getRow(), 5).getValue() || '').toUpperCase();
+      if (currentStatus === 'LINKED') throw new Error('A linked payment SMS cannot be changed.');
+      if (currentStatus !== 'PENDING') throw new Error('Only pending SMS messages can be verified or ignored.');
+      sheet.getRange(idCell.getRow(), 5, 1, 2).setValues([[status, new Date()]]);
+      SpreadsheetApp.flush();
+      return ContentService
+        .createTextOutput(JSON.stringify({ status: 'success', message: 'SMS review status updated.' }))
         .setMimeType(ContentService.MimeType.JSON);
     }
 
@@ -705,75 +905,67 @@ function doPost(e) {
         .setMimeType(ContentService.MimeType.JSON);
     }
 
-    // Every confirmed payment creates its own receipt and updates the invoice balance.
-    if (postData.action === 'confirm_invoice_payment') {
-      const invoice = findDocument(ss, 'invoices_log', postData.invoiceReference);
-      if (!invoice) throw new Error('Invoice not found: ' + postData.invoiceReference);
-      const invoiceData = withInvoicePaymentTotals(ss, documentResponse(invoice, 'invoice'));
-      const paymentRequestId = String(postData.paymentRequestId || '').trim();
-      const duplicateReceipt = findReceiptByPaymentRequest(ss, invoiceData.reference, paymentRequestId);
-      if (duplicateReceipt) {
+    if (postData.action === 'link_payment_sms_to_invoice') {
+      if (!isValidStaffPassword(ss, postData.staffPassword)) {
         return ContentService
-          .createTextOutput(JSON.stringify({ status: 'success', documentType: 'receipt', reference: duplicateReceipt.values[1], orderReference: '', data: documentResponse(duplicateReceipt, 'receipt'), idempotent: true }))
+          .createTextOutput(JSON.stringify({ status: 'error', message: 'Staff authorization required.' }))
           .setMimeType(ContentService.MimeType.JSON);
       }
-      if (invoiceData.balance <= 0) throw new Error('This invoice has already been fully paid.');
-      const requestedAmount = postData.paymentAmount === undefined || String(postData.paymentAmount).trim() === ''
-        ? invoiceData.balance
-        : Number(postData.paymentAmount);
-      if (!Number.isFinite(requestedAmount) || requestedAmount <= 0) throw new Error('Payment amount must be greater than zero.');
-      if (requestedAmount - invoiceData.balance > 0.005) throw new Error('Payment amount cannot exceed the outstanding balance.');
-      const paymentAmount = Math.min(requestedAmount, invoiceData.balance);
-      const cumulativePaid = Number(invoiceData.amountPaid || 0) + paymentAmount;
-      const balance = Math.max(0, Number(invoiceData.total || 0) - cumulativePaid);
-      const nextInvoiceStatus = balance <= 0.005 ? 'PAID' : 'PARTIALLY_PAID';
-      invoice.sheet.getRange(invoice.rowNumber, 11).setValue(nextInvoiceStatus);
-      invoice.sheet.getRange(invoice.rowNumber, 12).setValue(postData.paymentMethod || '');
-      invoice.sheet.getRange(invoice.rowNumber, 13).setValue(postData.paymentReference || '');
-
-      const previousOrderStatus = getInvoiceOrderStatus(ss, invoiceData.reference);
-      const receiptReference = createDocumentReference('RCT');
-      const receiptSheet = getDocumentSheet(ss, 'receipts_log');
-      const productionItems = (invoiceData.items || []).filter(isProductionItem);
-      const receiptMetadata = JSON.stringify({
-        paymentAmount,
-        cumulativePaid,
-        balance,
-        paymentRequestId,
-        orderCompleted: previousOrderStatus === 'COMPLETED',
-        requiresProduction: productionItems.length > 0
-      });
-      const receiptItems = [{
-        title: `Payment toward invoice ${invoiceData.reference}`,
-        quantity: 1,
-        unitPrice: paymentAmount,
-        total: paymentAmount,
-        mode: '',
-        size: ''
-      }];
-      receiptSheet.appendRow(documentRecord({
-        ...invoiceData,
-        items: receiptItems,
-        subtotal: paymentAmount,
-        discount: 0,
-        total: paymentAmount,
-        taxBreakdown: receiptMetadata
-      }, receiptReference, invoiceData.reference, 'PAID', postData.paymentMethod, postData.paymentReference));
-
-      let orderReference = '';
-      if (productionItems.length && !previousOrderStatus) {
-        orderReference = createDocumentReference('ORD');
-        const orderSheet = getDocumentSheet(ss, 'orders_log');
-        orderSheet.appendRow(documentRecord({ ...invoiceData, items: invoiceData.items }, orderReference, receiptReference, 'IN_PRODUCTION', postData.paymentMethod, postData.paymentReference));
+      const smsId = String(postData.smsId || '').trim();
+      const invoiceReference = String(postData.invoiceReference || '').trim();
+      const transactionCode = String(postData.transactionCode || '').trim();
+      if (!smsId) throw new Error('Forwarded SMS ID is required.');
+      const smsSheet = ss.getSheetByName('payment_sms_inbox');
+      const idCell = smsSheet && smsSheet.getLastRow() > 1
+        ? smsSheet.getRange(2, 1, smsSheet.getLastRow() - 1, 1).createTextFinder(smsId).matchEntireCell(true).findNext()
+        : null;
+      if (!idCell) throw new Error('Forwarded SMS was not found.');
+      const smsRow = idCell.getRow();
+      const smsValues = smsSheet.getRange(smsRow, 1, 1, 8).getValues()[0];
+      if (!['VERIFIED', 'REVIEWED'].includes(String(smsValues[4] || '').toUpperCase())) {
+        throw new Error('Verify the SMS before linking it to an invoice.');
       }
-      SpreadsheetApp.flush();
+      if (smsValues[6] || smsValues[7]) throw new Error('This SMS is already linked to a payment.');
+      const parsedPayment = parseMpesaPaymentSms(smsValues[2]);
+      const submittedCode = transactionCode.toUpperCase();
+      const submittedAmount = Number(postData.paymentAmount);
+      if (!/^[A-Z0-9]{8,12}$/.test(submittedCode) || !String(smsValues[2] || '').toUpperCase().includes(submittedCode)) {
+        throw new Error('Enter the transaction code exactly as it appears in the SMS.');
+      }
+      if (parsedPayment.transactionCode && submittedCode !== parsedPayment.transactionCode) {
+        throw new Error('The transaction code does not match the SMS.');
+      }
+      if (!Number.isFinite(submittedAmount) || submittedAmount <= 0) {
+        throw new Error('Enter a valid payment amount.');
+      }
+      if (parsedPayment.amount && Math.abs(submittedAmount - parsedPayment.amount) > 0.005) {
+        throw new Error('The amount does not match the amount detected in the SMS.');
+      }
+      if (!invoiceReference) throw new Error('Choose an invoice.');
 
+      const payment = recordInvoicePayment(ss, {
+        invoiceReference,
+        paymentAmount: submittedAmount,
+        paymentRequestId: 'SMS-' + smsId,
+        paymentMethod: 'mpesa',
+        paymentReference: submittedCode
+      });
+      smsSheet.getRange(smsRow, 5, 1, 4).setValues([[
+        'LINKED', new Date(), invoiceReference, payment.reference
+      ]]);
+      SpreadsheetApp.flush();
+      payment.smsId = smsId;
+      payment.invoiceReference = invoiceReference;
       return ContentService
-        .createTextOutput(JSON.stringify({
-          status: 'success', documentType: 'receipt', reference: receiptReference, orderReference: orderReference,
-          data: documentResponse(findDocument(ss, 'receipts_log', receiptReference), 'receipt'),
-          invoice: withInvoicePaymentTotals(ss, documentResponse(findDocument(ss, 'invoices_log', invoiceData.reference), 'invoice'))
-        }))
+        .createTextOutput(JSON.stringify(payment))
+        .setMimeType(ContentService.MimeType.JSON);
+    }
+
+    // Every confirmed payment creates its own receipt and updates the invoice balance.
+    if (postData.action === 'confirm_invoice_payment') {
+      const payment = recordInvoicePayment(ss, postData);
+      return ContentService
+        .createTextOutput(JSON.stringify(payment))
         .setMimeType(ContentService.MimeType.JSON);
     }
 

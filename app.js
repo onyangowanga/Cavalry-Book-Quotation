@@ -66,6 +66,10 @@ let documentsRequest = null;
 let customBookQuoteDraft = null;
 let allExpenses = [];
 let expensesRequest = null;
+let paymentSmsEntries = [];
+let paymentSmsRequest = null;
+let linkingPaymentSmsId = '';
+let paymentSmsFilter = 'PENDING';
 let editingDocument = null;
 let deferredInstallPrompt = null;
 let reminderInvoices = [];
@@ -313,6 +317,7 @@ function logoutStaff() {
   sessionStorage.removeItem(DOCUMENTS_CACHE_KEY);
   allDocuments = [];
   allExpenses = [];
+  paymentSmsEntries = [];
   document.getElementById('customerNamesList').innerHTML = '';
   isStaff = false;
   staffPassword = '';
@@ -409,11 +414,185 @@ function switchAppTab(tabName) {
     button.classList.toggle('is-active', isActive);
     button.setAttribute('aria-selected', String(isActive));
   });
-  if (requestedTab === 'documents') loadDocumentsTracker();
+  if (requestedTab === 'documents') {
+    loadDocumentsTracker().then(loadPaymentSmsInbox);
+  }
   if (requestedTab === 'production') loadProductionQueue();
   if (requestedTab === 'expenses') loadExpensesTab();
   if (requestedTab === 'finance') loadFinancials();
   if (requestedTab === 'reminders') loadPaymentReminders();
+}
+
+async function loadPaymentSmsInbox() {
+  if (!isStaff) return;
+  if (paymentSmsRequest) return paymentSmsRequest;
+  const tableBody = document.getElementById('paymentSmsTableBody');
+  const syncStatus = document.getElementById('paymentSmsSyncStatus');
+  const token = staffPassword;
+  if (!paymentSmsEntries.length) tableBody.innerHTML = '<tr><td colspan="5" class="documents-empty">Loading forwarded messages...</td></tr>';
+  if (syncStatus) syncStatus.textContent = 'Loading…';
+
+  paymentSmsRequest = (async () => {
+    try {
+      const result = await postApi({ action: 'list_payment_sms', staffPassword: token });
+      if (!isStaff || token !== staffPassword) return;
+      if (result.status !== 'success') throw new Error(result.message || 'Forwarded messages could not be loaded.');
+      paymentSmsEntries = Array.isArray(result.data) ? result.data : [];
+      renderPaymentSmsInbox();
+      if (syncStatus) syncStatus.textContent = `Updated ${new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`;
+    } catch (error) {
+      console.error('Loading forwarded payment SMS failed:', error);
+      if (syncStatus) syncStatus.textContent = error.message || 'Messages unavailable.';
+      if (!paymentSmsEntries.length) {
+        tableBody.innerHTML = '<tr><td colspan="5" class="documents-empty">Forwarded messages are unavailable. Check the connection and refresh.</td></tr>';
+      }
+    }
+  })().finally(() => { paymentSmsRequest = null; });
+  return paymentSmsRequest;
+}
+
+function renderPaymentSmsInbox() {
+  const tableBody = document.getElementById('paymentSmsTableBody');
+  if (!tableBody) return;
+  const filter = document.getElementById('paymentSmsFilter');
+  if (filter && filter.value !== paymentSmsFilter) filter.value = paymentSmsFilter;
+  const filteredEntries = paymentSmsEntries.filter(entry => {
+    const status = String(entry.status || 'PENDING').toUpperCase();
+    if (paymentSmsFilter === 'ALL') return true;
+    if (paymentSmsFilter === 'VERIFIED') return status === 'VERIFIED' || status === 'REVIEWED';
+    return status === paymentSmsFilter;
+  });
+  if (!filteredEntries.length) {
+    const message = paymentSmsEntries.length
+      ? `No ${paymentSmsFilter.toLowerCase()} messages. Choose another filter to view other messages.`
+      : 'No forwarded payment messages yet.';
+    tableBody.innerHTML = `<tr><td colspan="6" class="documents-empty">${escapeHtml(message)}</td></tr>`;
+    return;
+  }
+  tableBody.innerHTML = filteredEntries.map(entry => {
+    const received = entry.receivedAt && Number.isFinite(new Date(entry.receivedAt).getTime())
+      ? new Date(entry.receivedAt).toLocaleString()
+      : escapeHtml(entry.receivedAt || '');
+    const rawStatus = String(entry.status || 'PENDING').toUpperCase();
+    const status = rawStatus === 'REVIEWED' ? 'VERIFIED' : rawStatus;
+    const parsedPayment = entry.parsedPayment || {};
+    const actions = status === 'PENDING'
+      ? `<div class="documents-row-actions"><button type="button" onclick="updatePaymentSmsStatus('${escapeHtml(entry.id)}', 'VERIFIED')">Verify message</button><button type="button" onclick="updatePaymentSmsStatus('${escapeHtml(entry.id)}', 'IGNORED')">Ignore</button></div>`
+      : status === 'VERIFIED'
+        ? `<div class="documents-row-actions"><button type="button" onclick="togglePaymentSmsLinkForm('${escapeHtml(entry.id)}')">${linkingPaymentSmsId === entry.id ? 'Cancel' : 'Link to invoice'}</button></div>${linkingPaymentSmsId === entry.id ? renderPaymentSmsLinkForm(entry) : ''}`
+        : status === 'LINKED'
+          ? `Recorded as <strong>${escapeHtml(entry.receiptReference || 'receipt')}</strong> for <strong>${escapeHtml(entry.linkedInvoice || 'invoice')}</strong>`
+          : '';
+    return `<tr>
+      <td data-label="Received">${received}</td>
+      <td data-label="Transaction code">${escapeHtml(parsedPayment.transactionCode || 'Not detected')}</td>
+      <td data-label="Amount">${parsedPayment.amount ? formatKshs(parsedPayment.amount) : 'Not detected'}</td>
+      <td data-label="SMS message" class="payment-sms-message">${escapeHtml(entry.message)}</td>
+      <td data-label="Review status"><span class="document-status-tag ${status === 'VERIFIED' || status === 'LINKED' ? 'is-paid' : status === 'PENDING' ? 'is-pending' : 'is-quoted'}">${escapeHtml(status)}</span></td>
+      <td data-label="Actions">${actions}</td>
+    </tr>`;
+  }).join('');
+}
+
+function setPaymentSmsFilter(filter) {
+  const allowedFilters = ['PENDING', 'VERIFIED', 'LINKED', 'IGNORED', 'ALL'];
+  if (!allowedFilters.includes(filter)) return;
+  paymentSmsFilter = filter;
+  renderPaymentSmsInbox();
+}
+
+function getOpenInvoicesForSmsLink() {
+  return allDocuments.filter(doc =>
+    doc.type === 'invoice' &&
+    ['PENDING', 'PARTIALLY_PAID'].includes(String(doc.status || '').toUpperCase()) &&
+    Number(doc.balance ?? doc.total) > 0
+  );
+}
+
+function renderPaymentSmsLinkForm(entry) {
+  const invoices = getOpenInvoicesForSmsLink();
+  const payment = entry.parsedPayment || {};
+  const options = invoices.map(invoice =>
+    `<option value="${escapeHtml(invoice.reference)}">${escapeHtml(invoice.reference)} · ${escapeHtml(invoice.clientName || 'Valued Client')} · balance ${formatKshs(invoice.balance ?? invoice.total)}</option>`
+  ).join('');
+  const formBody = invoices.length
+    ? `<label class="payment-sms-link-field"><span class="field-label">Invoice</span><select id="paymentSmsInvoice-${escapeHtml(entry.id)}"><option value="">Select an outstanding invoice</option>${options}</select></label>
+      <label class="payment-sms-link-field"><span class="field-label">Amount received (Kshs)</span><input id="paymentSmsAmount-${escapeHtml(entry.id)}" type="number" min="0.01" step="0.01" inputmode="decimal" value="${Number(payment.amount) > 0 ? escapeHtml(payment.amount) : ''}" placeholder="${Number(payment.amount) > 0 ? '' : 'Enter amount manually'}" required></label>
+      <label class="payment-sms-link-field"><span class="field-label">M-Pesa transaction code</span><input id="paymentSmsCode-${escapeHtml(entry.id)}" type="text" autocomplete="off" spellcheck="false" value="${escapeHtml(payment.transactionCode || '')}" placeholder="${payment.transactionCode ? '' : 'Enter code manually'}" required></label>
+      <p class="payment-sms-parsing-note">${Number(payment.amount) > 0 && payment.transactionCode ? `Detected ${formatKshs(payment.amount)} · ${escapeHtml(payment.transactionCode)}` : 'Could not detect all payment details. Enter them from the SMS.'}</p>
+      <button type="button" class="custom-btn" onclick="linkPaymentSmsToInvoice('${escapeHtml(entry.id)}')">Record verified payment</button>`
+    : '<p class="payment-sms-link-empty">No outstanding invoices are loaded. Refresh the admin dashboard and try again.</p>';
+  return `<div class="payment-sms-link-form">${formBody}<p class="payment-sms-link-warning">This records an M-Pesa receipt and updates the invoice balance. Verify the SMS against the M-Pesa business account first.</p></div>`;
+}
+
+function togglePaymentSmsLinkForm(id) {
+  linkingPaymentSmsId = linkingPaymentSmsId === id ? '' : id;
+  renderPaymentSmsInbox();
+}
+
+async function linkPaymentSmsToInvoice(smsId) {
+  if (!isStaff || !smsId) return;
+  const invoiceReference = document.getElementById(`paymentSmsInvoice-${smsId}`).value;
+  const paymentAmount = Number(document.getElementById(`paymentSmsAmount-${smsId}`).value);
+  const transactionCode = document.getElementById(`paymentSmsCode-${smsId}`).value.trim();
+  const sms = paymentSmsEntries.find(entry => entry.id === smsId);
+  const invoice = getOpenInvoicesForSmsLink().find(entry => entry.reference === invoiceReference);
+  if (!invoiceReference || !invoice) {
+    alert('Choose an outstanding invoice.');
+    return;
+  }
+  if (!Number.isFinite(paymentAmount) || paymentAmount <= 0 || paymentAmount - Number(invoice.balance ?? invoice.total) > 0.005) {
+    alert(`Enter an amount greater than zero and no more than ${formatKshs(invoice.balance ?? invoice.total)}.`);
+    return;
+  }
+  if (!transactionCode || !String(sms && sms.message || '').toUpperCase().includes(transactionCode.toUpperCase())) {
+    alert('Enter the M-Pesa transaction code exactly as it appears in the SMS.');
+    return;
+  }
+  if (sms.parsedPayment && sms.parsedPayment.amount && Math.abs(paymentAmount - sms.parsedPayment.amount) > 0.005) {
+    alert('The amount does not match the amount detected in the SMS.');
+    return;
+  }
+  if (!confirm(`Record ${formatKshs(paymentAmount)} as received for invoice ${invoiceReference}? Confirm you verified the SMS against the M-Pesa business account.`)) return;
+
+  const status = document.getElementById('paymentSmsSyncStatus');
+  if (status) status.textContent = 'Recording verified payment…';
+  try {
+    const result = await postApi({
+      action: 'link_payment_sms_to_invoice',
+      staffPassword,
+      smsId,
+      invoiceReference,
+      transactionCode,
+      paymentAmount
+    });
+    if (result.status !== 'success') throw new Error(result.message || 'The verified SMS could not be linked.');
+    linkingPaymentSmsId = '';
+    await loadDocumentsTracker();
+    await loadPaymentSmsInbox();
+    if (status) status.textContent = `Payment recorded as receipt ${result.reference}.`;
+  } catch (error) {
+    console.error('Linking verified SMS to invoice failed:', error);
+    if (status) status.textContent = error.message || 'Payment could not be recorded.';
+    alert(error.message || 'Payment could not be recorded. Please retry.');
+  }
+}
+
+async function updatePaymentSmsStatus(id, reviewStatus) {
+  if (!isStaff || !['VERIFIED', 'IGNORED'].includes(reviewStatus)) return;
+  if (reviewStatus === 'VERIFIED' && !confirm('Have you verified this payment against your M-Pesa business account?')) return;
+  if (reviewStatus === 'IGNORED' && !confirm('Mark this forwarded message as not a payment?')) return;
+  const status = document.getElementById('paymentSmsSyncStatus');
+  if (status) status.textContent = reviewStatus === 'VERIFIED' ? 'Verifying message…' : 'Ignoring message…';
+  try {
+    const result = await postApi({ action: 'update_payment_sms_status', staffPassword, id, reviewStatus });
+    if (result.status !== 'success') throw new Error(result.message || 'The review status could not be saved.');
+    if (reviewStatus === 'VERIFIED') paymentSmsFilter = 'VERIFIED';
+    await loadPaymentSmsInbox();
+  } catch (error) {
+    console.error('Updating forwarded payment SMS review failed:', error);
+    if (status) status.textContent = error.message || 'Review status could not be saved.';
+  }
 }
 
 async function loadPaymentReminders() {
