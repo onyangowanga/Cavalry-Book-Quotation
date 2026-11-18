@@ -134,6 +134,11 @@ h1 { font-weight: 700; font-size: clamp(1.8rem, 3vw, 2.45rem); line-height: 1.04
 .expense-entry-form .custom-btn { min-height: 39px; white-space: nowrap; }
 .production-print-button { border: 0; border-radius: 7px; padding: 8px 10px; background: var(--red); color: #fff; font-size: .74rem; font-weight: 800; cursor: pointer; }
 .production-print-button:disabled { background: #e4f5ec; color: var(--green); cursor: default; }
+.production-schedule-title { margin: 18px 0 4px; font-size: 1rem; }
+.production-schedule-help { margin-bottom: 10px; color: var(--muted); font-size: .78rem; }
+.delivery-date-input { min-height: 36px; padding: 6px 9px; border: 1px solid var(--line); border-radius: 8px; background: #fff; color: var(--ink); }
+.delivery-date-save { min-height: 36px; padding: 7px 11px; border: 0; border-radius: 8px; background: var(--red); color: #fff; font-size: .74rem; font-weight: 800; cursor: pointer; }
+.delivery-date-save:hover { filter: brightness(.92); }
 .documents-table-wrap { overflow-x: auto; border: 1px solid var(--line); border-radius: 12px; }
 .documents-table { width: 100%; border-collapse: collapse; font-size: .82rem; white-space: nowrap; }
 .documents-table th { padding: 11px 13px; background: #f7f3ef; color: var(--muted); font-size: .68rem; letter-spacing: .06em; text-transform: uppercase; text-align: left; }
@@ -151,6 +156,8 @@ h1 { font-weight: 700; font-size: clamp(1.8rem, 3vw, 2.45rem); line-height: 1.04
 .document-status-tag.is-partial { background: #fff1dd; color: #9b5c00; }
 .document-status-tag.is-active { background: #eaf1fb; color: #2255a4; }
 .document-status-tag.is-quoted { background: #f0eefb; color: #5c3ea8; }
+.document-status-tag.is-void, .document-status-tag.is-archived { background: #f3e8e8; color: #8c3030; }
+.catalogue-delete-btn { color: #8c3030; }
 .documents-row-actions { display: flex; flex-wrap: wrap; gap: 6px; }
 .documents-row-actions button { border: 0; border-radius: 7px; padding: 6px 9px; font-size: .72rem; font-weight: 800; cursor: pointer; background: #f5f0eb; color: var(--ink); }
 .documents-row-actions button:hover { background: var(--red); color: #fff; }
@@ -525,11 +532,15 @@ h1 { font-weight: 700; font-size: clamp(1.8rem, 3vw, 2.45rem); line-height: 1.04
 
 html.admin-portal-route #catalogueTabButton,
 html.admin-portal-route #massTabButton,
-html.admin-portal-route #catalogueTabPanel,
 html.admin-portal-route #massTabPanel,
 html.admin-portal-route #installAppButton,
 html.admin-portal-route #installAppStatus,
 html.admin-portal-route #cartFab { display: none !important; }
+html.admin-portal-route #catalogueTabPanel .quote-panel,
+html.admin-portal-route #catalogueTabPanel .add-btn,
+html.admin-portal-route #bookDetailAdd { display: none !important; }
+html.admin-portal-route.admin-portal-authenticated #catalogueTabButton { display: inline-flex !important; }
+html.admin-portal-route.admin-portal-authenticated #catalogueTabPanel.is-active { display: block; }
 html.admin-portal-route:not(.admin-portal-authenticated) .app-tabs,
 html.admin-portal-route:not(.admin-portal-authenticated) .tab-panel { display: none !important; }
 html.admin-portal-route.admin-portal-authenticated .app-tabs { display: flex; }

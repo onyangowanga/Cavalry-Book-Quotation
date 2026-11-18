@@ -83,6 +83,7 @@
         <div class="status-row">
           <div class="status-card"><span>Payment</span><strong id="paymentStatus"></strong></div>
           <div class="status-card"><span>Production</span><strong id="productionStatus"></strong></div>
+          <div class="status-card"><span>Expected delivery</span><strong id="expectedDeliveryDate"></strong></div>
         </div>
         <div class="payment-summary">
           <div><span>Order total</span><strong id="orderTotal"></strong></div>
@@ -149,6 +150,11 @@
         const production = document.getElementById('productionStatus');
         production.textContent = order.orderStatus === 'COMPLETED' ? 'Ready for collection' : 'In production';
         production.className = order.orderStatus === 'COMPLETED' ? 'status-paid' : '';
+        const deliveryMatch = String(order.expectedDeliveryDate || '').match(/^(\d{4})-(\d{2})-(\d{2})$/);
+        document.getElementById('expectedDeliveryDate').textContent = deliveryMatch
+          ? new Date(Number(deliveryMatch[1]), Number(deliveryMatch[2]) - 1, Number(deliveryMatch[3]), 12)
+            .toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'long', year: 'numeric' })
+          : 'To be confirmed';
         document.getElementById('orderTotal').textContent = money(order.total);
         document.getElementById('amountPaid').textContent = money(order.amountPaid);
         document.getElementById('balance').textContent = money(order.balance);

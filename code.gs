@@ -180,15 +180,69 @@ function createDocumentReference(prefix) {
 
 function getDocumentSheet(ss, name) {
   const headers = ['Timestamp', 'Reference', 'Parent Reference', 'Client Name', 'Client Phone', 'Items JSON', 'Subtotal (Kshs)', 'Discount (Kshs)', 'Total (Kshs)', 'Tax / Breakdown', 'Status', 'Payment Method', 'Payment Reference'];
-  if (name === 'orders_log') headers.push('Public Tracking Token');
+  if (name === 'orders_log') headers.push('Public Tracking Token', 'Expected Delivery Date');
   let sheet = ss.getSheetByName(name);
   if (!sheet) {
     sheet = ss.insertSheet(name);
     sheet.appendRow(headers);
-  } else if (name === 'orders_log' && !sheet.getRange(1, 14).getValue()) {
-    sheet.getRange(1, 14).setValue(headers[13]);
+  } else if (name === 'orders_log') {
+    if (!sheet.getRange(1, 14).getValue()) sheet.getRange(1, 14).setValue(headers[13]);
+    if (!sheet.getRange(1, 15).getValue()) sheet.getRange(1, 15).setValue(headers[14]);
   }
   return sheet;
+}
+
+function addWorkingDays(startDate, workingDays) {
+  const date = new Date(startDate);
+  let added = 0;
+  while (added < workingDays) {
+    date.setDate(date.getDate() + 1);
+    if (date.getDay() !== 0 && date.getDay() !== 6) added++;
+  }
+  return date;
+}
+
+function formatOrderDate(value) {
+  if (value instanceof Date && !isNaN(value.getTime())) {
+    return Utilities.formatDate(value, Session.getScriptTimeZone(), 'yyyy-MM-dd');
+  }
+  const text = String(value || '').trim();
+  return /^\d{4}-\d{2}-\d{2}$/.test(text) ? text : '';
+}
+
+function parseOrderDate(value) {
+  const text = String(value || '').trim();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(text)) throw new Error('Enter a valid expected delivery date.');
+  const [year, month, day] = text.split('-').map(Number);
+  const date = new Date(year, month - 1, day, 12);
+  if (date.getFullYear() !== year || date.getMonth() !== month - 1 || date.getDate() !== day) {
+    throw new Error('Enter a valid expected delivery date.');
+  }
+  return date;
+}
+
+function ensureOrderExpectedDeliveryDate(orderRecord) {
+  if (!orderRecord || !orderRecord.sheet || !orderRecord.rowNumber) throw new Error('Order record is required.');
+  const existingDate = formatOrderDate(orderRecord.values[14]);
+  if (existingDate) return existingDate;
+  const productionStartedAt = orderRecord.values[0] instanceof Date
+    ? orderRecord.values[0]
+    : new Date(orderRecord.values[0] || new Date());
+  const expectedDate = addWorkingDays(
+    isNaN(productionStartedAt.getTime()) ? new Date() : productionStartedAt,
+    3
+  );
+  orderRecord.sheet.getRange(orderRecord.rowNumber, 15).setValue(expectedDate);
+  orderRecord.values[14] = expectedDate;
+  return formatOrderDate(expectedDate);
+}
+
+function setOrderExpectedDeliveryDate(orderRecord, value) {
+  if (!orderRecord || !orderRecord.sheet || !orderRecord.rowNumber) throw new Error('Order record is required.');
+  const expectedDate = parseOrderDate(value);
+  orderRecord.sheet.getRange(orderRecord.rowNumber, 15).setValue(expectedDate);
+  orderRecord.values[14] = expectedDate;
+  return formatOrderDate(expectedDate);
 }
 
 function getOrderTrackingUrl(token) {
@@ -219,6 +273,10 @@ function getPublicOrderStatus(ss, trackingToken) {
   const orderRecord = findDocument(ss, 'orders_log', sheet.getRange(tokenCell.getRow(), 2).getValue());
   if (!orderRecord) return { status: 'error', message: 'This order could not be found.' };
   const order = documentResponse(orderRecord, 'order');
+  if (String(order.status || '').toUpperCase() === 'ARCHIVED') {
+    return { status: 'error', message: 'This order is no longer available. Contact Cavalry Publishers for an update.' };
+  }
+  const expectedDeliveryDate = ensureOrderExpectedDeliveryDate(orderRecord);
   let invoiceReference = String(order.parentReference || '').trim();
   let invoiceRecord = findDocument(ss, 'invoices_log', invoiceReference);
   if (!invoiceRecord) {
@@ -251,6 +309,7 @@ function getPublicOrderStatus(ss, trackingToken) {
       orderReference: order.reference,
       createdAt: order.timestamp instanceof Date ? order.timestamp.toISOString() : String(order.timestamp || ''),
       orderStatus: String(order.status || 'IN_PRODUCTION'),
+      expectedDeliveryDate,
       paymentStatus: invoice ? invoice.status : 'UNKNOWN',
       total: Number(paymentTotal || 0),
       amountPaid: Number(amountPaid || 0),
@@ -269,13 +328,15 @@ function documentRecord(postData, reference, parentReference, status, paymentMet
 }
 
 function getPaymentSmsSheet(ss) {
-  const headers = ['Message ID', 'Received At', 'SMS Message', 'Forwarder Time', 'Review Status', 'Reviewed At', 'Linked Invoice', 'Receipt Reference'];
+  const headers = ['Message ID', 'Received At', 'SMS Message', 'Forwarder Time', 'Review Status', 'Reviewed At', 'Linked Invoice', 'Receipt Reference', 'Archived At', 'Archive Previous Status'];
   let sheet = ss.getSheetByName('payment_sms_inbox');
   if (!sheet) {
     sheet = ss.insertSheet('payment_sms_inbox');
     sheet.appendRow(headers);
-  } else if (sheet.getLastColumn() < headers.length) {
-    sheet.getRange(1, 1, 1, headers.length).setValues([headers]);
+  } else {
+    headers.forEach((header, index) => {
+      if (!sheet.getRange(1, index + 1).getValue()) sheet.getRange(1, index + 1).setValue(header);
+    });
   }
   return sheet;
 }
@@ -328,7 +389,7 @@ function listPaymentSms(ss) {
   if (!sheet || sheet.getLastRow() < 2) return [];
   const lastRow = sheet.getLastRow();
   const firstRow = Math.max(2, lastRow - 499);
-  const rows = sheet.getRange(firstRow, 1, lastRow - firstRow + 1, 8).getValues();
+  const rows = sheet.getRange(firstRow, 1, lastRow - firstRow + 1, 10).getValues();
   return rows.map(row => {
     const message = String(row[2] || '');
     return {
@@ -340,6 +401,7 @@ function listPaymentSms(ss) {
       reviewedAt: row[5] instanceof Date ? row[5].toISOString() : String(row[5] || ''),
       linkedInvoice: String(row[6] || ''),
       receiptReference: String(row[7] || ''),
+      archivedAt: row[8] instanceof Date ? row[8].toISOString() : String(row[8] || ''),
       parsedPayment: parseMpesaPaymentSms(message)
     };
   }).reverse();
@@ -353,12 +415,14 @@ function recordInvoicePayment(ss, postData) {
   const duplicateReceipt = findReceiptByPaymentRequest(ss, invoiceData.reference, paymentRequestId);
   if (duplicateReceipt) {
     const existingOrder = getInvoiceOrderRecord(ss, invoiceData.reference);
+    const expectedDeliveryDate = existingOrder ? ensureOrderExpectedDeliveryDate(existingOrder) : '';
     return {
       status: 'success',
       documentType: 'receipt',
       reference: duplicateReceipt.values[1],
       orderReference: existingOrder ? String(existingOrder.values[1] || '') : '',
       trackingUrl: existingOrder ? getOrderTrackingUrl(ensureOrderTrackingToken(existingOrder)) : '',
+      expectedDeliveryDate,
       data: documentResponse(duplicateReceipt, 'receipt'),
       invoice: invoiceData,
       idempotent: true
@@ -409,17 +473,20 @@ function recordInvoicePayment(ss, postData) {
 
   let orderReference = '';
   let trackingUrl = '';
+  let expectedDeliveryDate = '';
   if (productionItems.length && !previousOrderStatus) {
     orderReference = createDocumentReference('ORD');
     const orderSheet = getDocumentSheet(ss, 'orders_log');
     orderSheet.appendRow(documentRecord({ ...invoiceData, items: invoiceData.items }, orderReference, receiptReference, 'IN_PRODUCTION', postData.paymentMethod, postData.paymentReference));
     const orderRecord = findDocument(ss, 'orders_log', orderReference);
     trackingUrl = getOrderTrackingUrl(ensureOrderTrackingToken(orderRecord));
+    expectedDeliveryDate = ensureOrderExpectedDeliveryDate(orderRecord);
   } else if (productionItems.length) {
     const existingOrder = getInvoiceOrderRecord(ss, invoiceData.reference);
     if (existingOrder) {
       orderReference = String(existingOrder.values[1] || '');
       trackingUrl = getOrderTrackingUrl(ensureOrderTrackingToken(existingOrder));
+      expectedDeliveryDate = ensureOrderExpectedDeliveryDate(existingOrder);
     }
   }
   SpreadsheetApp.flush();
@@ -430,6 +497,7 @@ function recordInvoicePayment(ss, postData) {
     reference: receiptReference,
     orderReference,
     trackingUrl,
+    expectedDeliveryDate: expectedDeliveryDate || '',
     data: documentResponse(findDocument(ss, 'receipts_log', receiptReference), 'receipt'),
     invoice: withInvoicePaymentTotals(ss, documentResponse(findDocument(ss, 'invoices_log', invoiceData.reference), 'invoice'))
   };
@@ -446,7 +514,7 @@ function findDocument(ss, sheetName, reference) {
   const match = sheet.createTextFinder(trimmedReference).matchEntireCell(true).useRegularExpression(false).findNext();
   if (!match) return null;
   const rowNumber = match.getRow();
-  const width = Math.max(sheet.getLastColumn(), sheetName === 'orders_log' ? 14 : 13);
+  const width = Math.max(sheet.getLastColumn(), sheetName === 'orders_log' ? 15 : 13);
   const values = sheet.getRange(rowNumber, 1, 1, width).getValues()[0];
   const isLegacyQuote = sheetName === 'quotes_log' && match.getColumn() !== 2;
   return { sheet, rowNumber, values, isLegacyQuote };
@@ -493,8 +561,24 @@ function documentResponse(record, type) {
     cumulativePaid: Number(paymentMetadata.cumulativePaid || (type === 'receipt' ? values[8] : 0)),
     balance: Number(paymentMetadata.balance || 0),
     orderCompleted: Boolean(paymentMetadata.orderCompleted),
-    requiresProduction: Boolean(paymentMetadata.requiresProduction)
+    requiresProduction: Boolean(paymentMetadata.requiresProduction),
+    expectedDeliveryDate: type === 'order' ? formatOrderDate(values[14]) : '',
+    voidedAt: type === 'receipt' ? String(values[14] || '') : '',
+    voidReason: type === 'receipt' ? String(values[15] || '') : ''
   };
+}
+
+function ensureAdminRecordHeaders(sheet, headers) {
+  headers.forEach((header, index) => {
+    if (header && !sheet.getRange(1, index + 1).getValue()) sheet.getRange(1, index + 1).setValue(header);
+  });
+}
+
+function isOrderLinkedToRecords(ss, orderRecord) {
+  if (String(orderRecord.values[2] || '').trim()) return true;
+  return ['receipts_log', 'deliveries_log'].some(sheetName =>
+    Boolean(findDocumentByParent(ss, sheetName, String(orderRecord.values[1] || '').trim()))
+  );
 }
 
 function withInvoicePaymentTotals(ss, invoiceData) {
@@ -504,7 +588,8 @@ function withInvoicePaymentTotals(ss, invoiceData) {
   if (sheet && sheet.getLastRow() > 1) {
     const rows = sheet.getDataRange().getValues();
     for (let index = 1; index < rows.length; index++) {
-      if (String(rows[index][2] || '').trim() === String(invoiceData.reference).trim()) {
+      if (String(rows[index][2] || '').trim() === String(invoiceData.reference).trim() &&
+          String(rows[index][10] || '').toUpperCase() !== 'VOID') {
         amountPaid += Number(rows[index][8] || 0);
       }
     }
@@ -600,8 +685,9 @@ function findReceiptByPaymentRequest(ss, invoiceReference, paymentRequestId) {
 function listDocumentsFromSheet(ss, sheetName, type) {
   const sheet = ss.getSheetByName(sheetName);
   if (!sheet || sheet.getLastRow() < 2) return [];
-  if (sheetName === 'orders_log' && !sheet.getRange(1, 14).getValue()) {
-    sheet.getRange(1, 14).setValue('Public Tracking Token');
+  if (sheetName === 'orders_log') {
+    if (!sheet.getRange(1, 14).getValue()) sheet.getRange(1, 14).setValue('Public Tracking Token');
+    if (!sheet.getRange(1, 15).getValue()) sheet.getRange(1, 15).setValue('Expected Delivery Date');
   }
   const rows = sheet.getDataRange().getValues();
   if (sheetName === 'orders_log') {
@@ -630,10 +716,14 @@ function listDocumentsFromSheet(ss, sheetName, type) {
     const response = documentResponse(record, type);
     if (type === 'order') {
       response.trackingUrl = getOrderTrackingUrl(String(values[13] || ''));
+      response.expectedDeliveryDate = ensureOrderExpectedDeliveryDate(record);
     } else if (type === 'invoice') {
       const invoice = withInvoicePaymentTotals(ss, response);
       const order = getInvoiceOrderRecord(ss, invoice.reference);
-      if (order) invoice.trackingUrl = getOrderTrackingUrl(ensureOrderTrackingToken(order));
+      if (order) {
+        invoice.trackingUrl = getOrderTrackingUrl(ensureOrderTrackingToken(order));
+        invoice.expectedDeliveryDate = ensureOrderExpectedDeliveryDate(order);
+      }
       records.push(invoice);
       continue;
     }
@@ -978,6 +1068,116 @@ function doPost(e) {
         .setMimeType(ContentService.MimeType.JSON);
     }
 
+    if (postData.action === 'manage_admin_record') {
+      if (!isValidStaffPassword(ss, postData.staffPassword)) {
+        return ContentService
+          .createTextOutput(JSON.stringify({ status: 'error', message: 'Staff authorization required.' }))
+          .setMimeType(ContentService.MimeType.JSON);
+      }
+
+      const recordType = String(postData.recordType || '').trim().toLowerCase();
+      const operation = String(postData.operation || '').trim().toLowerCase();
+      if (!['archive', 'restore', 'delete'].includes(operation)) throw new Error('Choose a valid record action.');
+
+      if (recordType === 'book') {
+        if (operation !== 'delete') throw new Error('Catalogue books can only be permanently removed.');
+        const booksSheet = ss.getSheetByName('books');
+        const bookId = Number(postData.bookId);
+        const expectedTitle = String(postData.title || '').trim();
+        if (!booksSheet || !Number.isInteger(bookId) || bookId < 1 || bookId >= booksSheet.getLastRow()) {
+          throw new Error('Catalogue book not found. Refresh the catalogue and try again.');
+        }
+        const bookRow = bookId + 1;
+        const actualTitle = String(booksSheet.getRange(bookRow, 1).getValue() || '').trim();
+        if (!actualTitle || actualTitle !== expectedTitle) {
+          throw new Error('The catalogue changed. Refresh the catalogue and try again.');
+        }
+        booksSheet.deleteRow(bookRow);
+        clearCatalogueCache();
+        SpreadsheetApp.flush();
+        return ContentService
+          .createTextOutput(JSON.stringify({ status: 'success', recordType, title: actualTitle }))
+          .setMimeType(ContentService.MimeType.JSON);
+      }
+
+      if (recordType === 'payment_sms') {
+        const messageId = String(postData.reference || '').trim();
+        const sheet = getPaymentSmsSheet(ss);
+        const idCell = messageId && sheet.getLastRow() > 1
+          ? sheet.getRange(2, 1, sheet.getLastRow() - 1, 1)
+            .createTextFinder(messageId).matchEntireCell(true).useRegularExpression(false).findNext()
+          : null;
+        if (!idCell) throw new Error('Payment SMS record not found.');
+        const row = idCell.getRow();
+        const values = sheet.getRange(row, 1, 1, 10).getValues()[0];
+        if (operation === 'delete') {
+          if (values[6] || values[7]) throw new Error('A linked payment SMS is retained with its receipt and cannot be permanently deleted.');
+          sheet.deleteRow(row);
+        } else if (operation === 'archive') {
+          if (String(values[4] || '').toUpperCase() === 'ARCHIVED') throw new Error('This payment SMS is already archived.');
+          sheet.getRange(row, 9, 1, 2).setValues([[new Date(), String(values[4] || 'PENDING')]]);
+          sheet.getRange(row, 5).setValue('ARCHIVED');
+        } else {
+          if (String(values[4] || '').toUpperCase() !== 'ARCHIVED') throw new Error('This payment SMS is not archived.');
+          sheet.getRange(row, 5).setValue(String(values[9] || 'PENDING'));
+          sheet.getRange(row, 9, 1, 2).clearContent();
+        }
+        SpreadsheetApp.flush();
+        return ContentService
+          .createTextOutput(JSON.stringify({ status: 'success', recordType, operation, reference: messageId }))
+          .setMimeType(ContentService.MimeType.JSON);
+      }
+
+      const documentSheets = {
+        order: 'orders_log',
+        receipt: 'receipts_log'
+      };
+      const sheetName = documentSheets[recordType];
+      if (!sheetName) throw new Error('This record type cannot be changed here.');
+      const record = findDocument(ss, sheetName, postData.reference);
+      if (!record) throw new Error(`${recordType === 'order' ? 'Order' : 'Receipt'} not found.`);
+
+      if (recordType === 'order') {
+        ensureAdminRecordHeaders(record.sheet, ['', '', '', '', '', '', '', '', '', '', '', '', '', '', '', 'Archive Previous Status', 'Archived At']);
+        if (operation === 'delete') {
+          if (isOrderLinkedToRecords(ss, record)) {
+            throw new Error('This order is linked to an invoice, receipt, or delivery record. Archive it instead to preserve history.');
+          }
+          record.sheet.deleteRow(record.rowNumber);
+        } else if (operation === 'archive') {
+          if (String(record.values[10] || '').toUpperCase() === 'ARCHIVED') throw new Error('This order is already archived.');
+          record.sheet.getRange(record.rowNumber, 16, 1, 2)
+            .setValues([[String(record.values[10] || 'IN_PRODUCTION'), new Date()]]);
+          record.sheet.getRange(record.rowNumber, 11).setValue('ARCHIVED');
+        } else {
+          if (String(record.values[10] || '').toUpperCase() !== 'ARCHIVED') throw new Error('This order is not archived.');
+          record.sheet.getRange(record.rowNumber, 11).setValue(String(record.values[15] || 'IN_PRODUCTION'));
+          record.sheet.getRange(record.rowNumber, 16, 1, 2).clearContent();
+        }
+      } else {
+        ensureAdminRecordHeaders(record.sheet, ['', '', '', '', '', '', '', '', '', '', '', '', '', 'Void Previous Status', 'Voided At', 'Void Reason']);
+        if (operation === 'delete') {
+          throw new Error('Receipts are linked to invoice balances and retained for financial audit. Void the receipt to correct it.');
+        }
+        if (operation === 'archive') {
+          if (String(record.values[10] || '').toUpperCase() === 'VOID') throw new Error('This receipt is already void.');
+          const reason = String(postData.reason || '').trim();
+          if (!reason) throw new Error('Enter a reason for voiding this receipt.');
+          record.sheet.getRange(record.rowNumber, 14, 1, 3)
+            .setValues([[String(record.values[10] || ''), new Date(), reason]]);
+          record.sheet.getRange(record.rowNumber, 11).setValue('VOID');
+        } else {
+          if (String(record.values[10] || '').toUpperCase() !== 'VOID') throw new Error('This receipt is not void.');
+          record.sheet.getRange(record.rowNumber, 11).setValue(String(record.values[13] || ''));
+          record.sheet.getRange(record.rowNumber, 14, 1, 3).clearContent();
+        }
+      }
+      SpreadsheetApp.flush();
+      return ContentService
+        .createTextOutput(JSON.stringify({ status: 'success', recordType, operation, reference: String(record.values[1] || '') }))
+        .setMimeType(ContentService.MimeType.JSON);
+    }
+
     // Quotation -> Invoice. Adds optional extra charges (e.g. delivery) and blocks duplicate conversion.
     if (postData.action === 'convert_quote_to_invoice') {
       const quote = findDocument(ss, 'quotes_log', postData.quotationReference);
@@ -1013,16 +1213,19 @@ function doPost(e) {
 
       let orderReference = '';
       let trackingUrl = '';
+      let expectedDeliveryDate = '';
       if (postData.startProduction === true && items.some(isProductionItem)) {
         orderReference = createDocumentReference('ORD');
         const invoiceData = documentResponse(findDocument(ss, 'invoices_log', invoiceReference), 'invoice');
         const orderSheet = getDocumentSheet(ss, 'orders_log');
         orderSheet.appendRow(documentRecord(invoiceData, orderReference, invoiceReference, 'IN_PRODUCTION', '', ''));
-        trackingUrl = getOrderTrackingUrl(ensureOrderTrackingToken(findDocument(ss, 'orders_log', orderReference)));
+        const orderRecord = findDocument(ss, 'orders_log', orderReference);
+        trackingUrl = getOrderTrackingUrl(ensureOrderTrackingToken(orderRecord));
+        expectedDeliveryDate = ensureOrderExpectedDeliveryDate(orderRecord);
       }
 
       return ContentService
-        .createTextOutput(JSON.stringify({ status: 'success', documentType: 'invoice', reference: invoiceReference, orderReference, trackingUrl, data: withInvoicePaymentTotals(ss, documentResponse(findDocument(ss, 'invoices_log', invoiceReference), 'invoice')) }))
+        .createTextOutput(JSON.stringify({ status: 'success', documentType: 'invoice', reference: invoiceReference, orderReference, trackingUrl, expectedDeliveryDate, data: withInvoicePaymentTotals(ss, documentResponse(findDocument(ss, 'invoices_log', invoiceReference), 'invoice')) }))
         .setMimeType(ContentService.MimeType.JSON);
     }
 
@@ -1109,16 +1312,34 @@ function doPost(e) {
             status: 'success',
             alreadyStarted: true,
             orderReference: existingOrder.values[1],
-            trackingUrl: getOrderTrackingUrl(ensureOrderTrackingToken(existingOrder))
+            trackingUrl: getOrderTrackingUrl(ensureOrderTrackingToken(existingOrder)),
+            expectedDeliveryDate: ensureOrderExpectedDeliveryDate(existingOrder)
           }))
           .setMimeType(ContentService.MimeType.JSON);
       }
       const orderReference = createDocumentReference('ORD');
       getDocumentSheet(ss, 'orders_log').appendRow(documentRecord(invoiceData, orderReference, invoiceData.reference, 'IN_PRODUCTION', '', ''));
-      const trackingUrl = getOrderTrackingUrl(ensureOrderTrackingToken(findDocument(ss, 'orders_log', orderReference)));
+      const orderRecord = findDocument(ss, 'orders_log', orderReference);
+      const trackingUrl = getOrderTrackingUrl(ensureOrderTrackingToken(orderRecord));
+      const expectedDeliveryDate = ensureOrderExpectedDeliveryDate(orderRecord);
       SpreadsheetApp.flush();
       return ContentService
-        .createTextOutput(JSON.stringify({ status: 'success', orderReference, trackingUrl, data: documentResponse(findDocument(ss, 'orders_log', orderReference), 'order') }))
+        .createTextOutput(JSON.stringify({ status: 'success', orderReference, trackingUrl, expectedDeliveryDate, data: documentResponse(findDocument(ss, 'orders_log', orderReference), 'order') }))
+        .setMimeType(ContentService.MimeType.JSON);
+    }
+
+    if (postData.action === 'update_order_delivery_date') {
+      if (!isValidStaffPassword(ss, postData.staffPassword)) {
+        return ContentService
+          .createTextOutput(JSON.stringify({ status: 'error', message: 'Staff authorization required.' }))
+          .setMimeType(ContentService.MimeType.JSON);
+      }
+      const order = findDocument(ss, 'orders_log', postData.orderReference);
+      if (!order) throw new Error('Order not found.');
+      const expectedDeliveryDate = setOrderExpectedDeliveryDate(order, postData.expectedDeliveryDate);
+      SpreadsheetApp.flush();
+      return ContentService
+        .createTextOutput(JSON.stringify({ status: 'success', orderReference: order.values[1], expectedDeliveryDate }))
         .setMimeType(ContentService.MimeType.JSON);
     }
 

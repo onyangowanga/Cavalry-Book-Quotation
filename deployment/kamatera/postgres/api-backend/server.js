@@ -449,8 +449,21 @@ async function handleRequest(request, response) {
       return;
     }
     try {
+      const options = Number(request.headers['content-length'] || 0) > 0 || request.headers['transfer-encoding']
+        ? await readJsonBody(request)
+        : {};
       await pool.query('DELETE FROM admin_read_cache');
       await pool.query('DELETE FROM public_order_status_cache');
+      if (options.refreshCatalogue === true) {
+        await syncCatalogue();
+        const { rows } = await pool.query(
+          'SELECT last_error FROM catalogue_sync_state WHERE singleton = TRUE'
+        );
+        if (rows[0] && rows[0].last_error) {
+          sendJson(response, 503, { status: 'error', message: 'Catalogue changed, but the VPS catalogue cache could not be refreshed.' }, origin);
+          return;
+        }
+      }
       sendJson(response, 200, { status: 'success' }, origin);
     } catch (error) {
       console.error('Admin read cache invalidation failed:', error.message);

@@ -243,7 +243,7 @@
         <div class="admin-dashboard-records-heading">
           <div><h3>Forwarded payment SMS</h3><span>Verify each message first; linking it records a receipt and updates the invoice.</span></div>
           <div class="documents-refresh-group">
-            <label class="payment-sms-filter"><span class="field-label">Show</span><select id="paymentSmsFilter" onchange="setPaymentSmsFilter(this.value)"><option value="PENDING" selected>Pending</option><option value="VERIFIED">Verified</option><option value="LINKED">Linked</option><option value="IGNORED">Ignored</option><option value="ALL">All messages</option></select></label>
+            <label class="payment-sms-filter"><span class="field-label">Show</span><select id="paymentSmsFilter" onchange="setPaymentSmsFilter(this.value)"><option value="PENDING" selected>Pending</option><option value="VERIFIED">Verified</option><option value="LINKED">Linked</option><option value="IGNORED">Ignored</option><option value="ARCHIVED">Archived</option><option value="ALL">All messages</option></select></label>
             <span id="paymentSmsSyncStatus" class="documents-sync-status" role="status" aria-live="polite"></span>
             <button class="refresh-btn" type="button" onclick="loadPaymentSmsInbox(true)">Refresh messages</button>
           </div>
@@ -302,13 +302,21 @@
         <div>
           <div class="eyebrow">Admin · Production</div>
           <h2>Books in production</h2>
-          <p>Mark each book line printed. Orders complete and delivery notes are created when all book lines are printed.</p>
+          <p>Set an expected delivery date for each order and mark book lines printed. The default is the third working day after production starts.</p>
         </div>
         <div class="documents-refresh-group">
           <button class="refresh-btn" type="button" onclick="switchAppTab('documents')">Admin dashboard</button>
           <span id="productionQueueCount" class="documents-sync-status" role="status" aria-live="polite"></span>
           <button class="refresh-btn" type="button" onclick="loadProductionQueue(true)">Refresh queue</button>
         </div>
+      </div>
+      <h3 class="production-schedule-title">Order delivery dates</h3>
+      <p class="production-schedule-help">Choose a new date when needed; Saturdays and Sundays are excluded from the automatic estimate.</p>
+      <div class="documents-table-wrap production-schedule-wrap">
+        <table class="documents-table">
+          <thead><tr><th>Order</th><th>Client</th><th>Expected delivery</th><th>Action</th></tr></thead>
+          <tbody id="productionOrdersTableBody"><tr><td colspan="4" class="documents-empty">Loading delivery dates...</td></tr></tbody>
+        </table>
       </div>
       <div class="documents-table-wrap">
         <table class="documents-table production-table">
@@ -536,7 +544,7 @@
   </div>
 
   <div id="bookDetailModal" class="book-detail-modal" role="dialog" aria-modal="true" aria-labelledby="bookDetailTitle">
-    <article class="book-detail-card"><div class="book-detail-top"><div><div class="eyebrow">Book details</div><h2 id="bookDetailTitle"></h2></div><button class="drawer-close" onclick="closeBookDetails()" aria-label="Close book details">&times;</button></div><div class="book-detail-content"><div id="bookDetailCover"></div><div class="detail-list"><div class="detail-row"><span class="field-label">Author</span><strong id="bookDetailAuthor"></strong></div><div class="detail-row"><span class="field-label">Pages</span><strong id="bookDetailPages"></strong></div><div class="detail-row"><span class="field-label">Colour pages</span><strong id="bookDetailColor"></strong></div><div class="detail-row"><span class="field-label">Page size</span><strong id="bookDetailSize"></strong></div><div class="detail-row"><span class="field-label">Unit price</span><strong id="bookDetailPrice"></strong></div><button type="button" class="link-btn" id="bookDetailEditPrice" style="display:none; text-align:left;">Set special price</button><button class="custom-btn" id="bookDetailAdd">Add to quote</button></div></div></article>
+    <article class="book-detail-card"><div class="book-detail-top"><div><div class="eyebrow">Book details</div><h2 id="bookDetailTitle"></h2></div><button class="drawer-close" onclick="closeBookDetails()" aria-label="Close book details">&times;</button></div><div class="book-detail-content"><div id="bookDetailCover"></div><div class="detail-list"><div class="detail-row"><span class="field-label">Author</span><strong id="bookDetailAuthor"></strong></div><div class="detail-row"><span class="field-label">Pages</span><strong id="bookDetailPages"></strong></div><div class="detail-row"><span class="field-label">Colour pages</span><strong id="bookDetailColor"></strong></div><div class="detail-row"><span class="field-label">Page size</span><strong id="bookDetailSize"></strong></div><div class="detail-row"><span class="field-label">Unit price</span><strong id="bookDetailPrice"></strong></div><button type="button" class="link-btn" id="bookDetailEditPrice" style="display:none; text-align:left;">Set special price</button><button type="button" class="custom-btn" id="bookDetailDelete" hidden>Remove from catalogue</button><button class="custom-btn" id="bookDetailAdd">Add to quote</button></div></div></article>
   </div>
 
   <section id="printQuote" class="print-quote" aria-label="Printable quotation">
@@ -562,7 +570,7 @@
       <div class="print-total-line final"><span>Total quotation</span><strong id="printTotal"></strong></div>
       <div class="print-total-line" id="printMinimumNote" style="display:none;"><span>Minimum order amount applied</span></div>
     </div>
-    <footer class="print-footer"><span>Payment Till No: 5675635</span><span>Production begins after receipt of payment · Delivery within 2 working days</span></footer>
+    <footer class="print-footer"><span>Payment Till No: 5675635</span><span>Production begins after receipt of payment · Expected delivery date shared when production starts</span></footer>
   </section>
 
   <script src="app.js"></script>

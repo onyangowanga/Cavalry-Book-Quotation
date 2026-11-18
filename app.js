@@ -5,10 +5,10 @@ const COMPANY_WHATSAPP = "254726953346"; // Replace with your primary business W
 const TILL_NUMBER = "5675635"; // Buy Goods till number clients pay to
 const ADMIN_MUTATION_ACTIONS = new Set([
   'add_expense', 'advance_production_stage', 'complete_order', 'confirm_invoice_payment',
-  'confirm_reminder_sent', 'convert_quote_to_invoice', 'delete_quotation',
+  'confirm_reminder_sent', 'convert_quote_to_invoice', 'delete_quotation', 'manage_admin_record',
   'link_payment_sms_to_invoice', 'mark_order_item_printed', 'schedule_reminder',
   'set_production_stages', 'start_invoice_production', 'update_document',
-  'update_payment_sms_status'
+  'update_order_delivery_date', 'update_payment_sms_status'
 ]);
 
 // Central fetch wrapper: surfaces a clear message instead of a raw JSON-parse crash when the
@@ -30,10 +30,12 @@ async function postApi(payload) {
     const sessionToken = String(payload.staffPassword || staffPassword);
     if (result.status === 'success' && ADMIN_MUTATION_ACTIONS.has(payload.action) && sessionToken.startsWith('SESSION-')) {
       try {
+        const refreshCatalogue = payload.action === 'manage_admin_record' && payload.recordType === 'book';
         const invalidation = await fetch(`${ADMIN_API_URL}/invalidate`, {
           method: 'POST',
           headers: { Authorization: `Bearer ${sessionToken}` },
-          signal: AbortSignal.timeout(3000)
+          body: JSON.stringify({ refreshCatalogue }),
+          signal: AbortSignal.timeout(refreshCatalogue ? 25000 : 3000)
         });
         if (!invalidation.ok) {
           console.warn('Admin data cache invalidation returned HTTP', invalidation.status);
@@ -169,6 +171,7 @@ if (IS_ADMIN_PORTAL) {
   document.title = 'Cavalry Publishers | Admin';
   document.querySelector('.intro h2').textContent = 'Admin workspace';
   document.querySelector('.intro p').textContent = 'Documents, payments and business operations.';
+  document.getElementById('catalogueTabButton').textContent = 'Manage catalogue';
   document.getElementById('installAppButton').hidden = true;
 }
 
@@ -321,7 +324,7 @@ function loadCatalog() {
         return response;
       });
 
-    fetchCatalog(CATALOG_API_URL, { signal: AbortSignal.timeout(6000) })
+    return fetchCatalog(CATALOG_API_URL, { signal: AbortSignal.timeout(6000) })
     .catch(apiError => {
       console.warn('Catalogue API unavailable; falling back to Google Sheets:', apiError);
       // Cache-bust the fallback so a manual refresh gets the latest source-of-truth data.
@@ -536,6 +539,7 @@ function switchAppTab(tabName) {
   if (requestedTab === 'documents') {
     loadDocumentsTracker().then(loadPaymentSmsInbox);
   }
+  if (requestedTab === 'catalogue' && IS_ADMIN_PORTAL && !catalog.length) loadCatalog();
   if (requestedTab === 'production') loadProductionQueue();
   if (requestedTab === 'expenses') loadExpensesTab();
   if (requestedTab === 'finance') loadFinancials();
@@ -595,13 +599,7 @@ function renderPaymentSmsInbox() {
     const rawStatus = String(entry.status || 'PENDING').toUpperCase();
     const status = rawStatus === 'REVIEWED' ? 'VERIFIED' : rawStatus;
     const parsedPayment = entry.parsedPayment || {};
-    const actions = status === 'PENDING'
-      ? `<div class="documents-row-actions"><button type="button" onclick="updatePaymentSmsStatus('${escapeHtml(entry.id)}', 'VERIFIED')">Verify message</button><button type="button" onclick="updatePaymentSmsStatus('${escapeHtml(entry.id)}', 'IGNORED')">Ignore</button></div>`
-      : status === 'VERIFIED'
-        ? `<div class="documents-row-actions"><button type="button" onclick="togglePaymentSmsLinkForm('${escapeHtml(entry.id)}')">${linkingPaymentSmsId === entry.id ? 'Cancel' : 'Link to invoice'}</button></div>${linkingPaymentSmsId === entry.id ? renderPaymentSmsLinkForm(entry) : ''}`
-        : status === 'LINKED'
-          ? `Recorded as <strong>${escapeHtml(entry.receiptReference || 'receipt')}</strong> for <strong>${escapeHtml(entry.linkedInvoice || 'invoice')}</strong>`
-          : '';
+    const actions = renderPaymentSmsActions(entry, status);
     return `<tr>
       <td data-label="Received">${received}</td>
       <td data-label="Transaction code">${escapeHtml(parsedPayment.transactionCode || 'Not detected')}</td>
@@ -613,8 +611,53 @@ function renderPaymentSmsInbox() {
   }).join('');
 }
 
+function renderPaymentSmsActions(entry, status) {
+  const id = escapeHtml(entry.id);
+  if (status === 'ARCHIVED') {
+    return `<div class="documents-row-actions"><button type="button" onclick="managePaymentSms('${id}', 'restore')">Restore</button>${!entry.linkedInvoice && !entry.receiptReference ? `<button type="button" onclick="managePaymentSms('${id}', 'delete')">Delete permanently</button>` : ''}</div>`;
+  }
+  const controls = [];
+  if (status === 'PENDING') {
+    controls.push(`<button type="button" onclick="updatePaymentSmsStatus('${id}', 'VERIFIED')">Verify message</button>`);
+    controls.push(`<button type="button" onclick="updatePaymentSmsStatus('${id}', 'IGNORED')">Ignore</button>`);
+  } else if (status === 'VERIFIED') {
+    controls.push(`<button type="button" onclick="togglePaymentSmsLinkForm('${id}')">${linkingPaymentSmsId === entry.id ? 'Cancel' : 'Link to invoice'}</button>`);
+  }
+  controls.push(`<button type="button" onclick="managePaymentSms('${id}', 'archive')">Archive</button>`);
+  if (!entry.linkedInvoice && !entry.receiptReference) {
+    controls.push(`<button type="button" onclick="managePaymentSms('${id}', 'delete')">Delete permanently</button>`);
+  }
+  const receipt = status === 'LINKED'
+    ? `Recorded as <strong>${escapeHtml(entry.receiptReference || 'receipt')}</strong> for <strong>${escapeHtml(entry.linkedInvoice || 'invoice')}</strong>`
+    : '';
+  const linkForm = status === 'VERIFIED' && linkingPaymentSmsId === entry.id ? renderPaymentSmsLinkForm(entry) : '';
+  return `${receipt}<div class="documents-row-actions">${controls.join('')}</div>${linkForm}`;
+}
+
+async function managePaymentSms(id, operation) {
+  if (!isStaff || !id || !['archive', 'restore', 'delete'].includes(operation)) return;
+  const promptText = operation === 'delete'
+    ? 'Permanently delete this unlinked payment SMS? This cannot be undone.'
+    : operation === 'archive'
+      ? 'Archive this payment SMS? It will be hidden from the default pending list and can be restored.'
+      : 'Restore this archived payment SMS?';
+  if (!confirm(promptText)) return;
+  const status = document.getElementById('paymentSmsSyncStatus');
+  if (status) status.textContent = `${operation === 'delete' ? 'Deleting' : operation === 'archive' ? 'Archiving' : 'Restoring'} payment SMS…`;
+  try {
+    const result = await postApi({ action: 'manage_admin_record', recordType: 'payment_sms', operation, reference: id, staffPassword });
+    if (result.status !== 'success') throw new Error(result.message || 'The payment SMS could not be updated.');
+    if (operation === 'restore') paymentSmsFilter = 'ALL';
+    await loadPaymentSmsInbox(true);
+    if (status) status.textContent = 'Payment SMS updated.';
+  } catch (error) {
+    console.error('Updating payment SMS record failed:', error);
+    if (status) status.textContent = error.message || 'The payment SMS could not be updated.';
+  }
+}
+
 function setPaymentSmsFilter(filter) {
-  const allowedFilters = ['PENDING', 'VERIFIED', 'LINKED', 'IGNORED', 'ALL'];
+  const allowedFilters = ['PENDING', 'VERIFIED', 'LINKED', 'IGNORED', 'ARCHIVED', 'ALL'];
   if (!allowedFilters.includes(filter)) return;
   paymentSmsFilter = filter;
   renderPaymentSmsInbox();
@@ -1530,7 +1573,7 @@ function displayBooks(books) {
           <div class="book-price">Kshs. ${Number(book.unitCost).toFixed(2)}</div>
           ${book.hasSpecialPrice ? '<span class="custom-price-tag">Special price</span>' : ''}
         </div>
-        ${isStaff ? `<button type="button" class="link-btn" onclick="event.stopPropagation(); editSpecialPrice(${book.id})">${book.hasSpecialPrice ? 'Edit special price' : 'Set special price'}</button>` : ''}
+        ${isStaff ? `<button type="button" class="link-btn" onclick="event.stopPropagation(); editSpecialPrice(${book.id})">${book.hasSpecialPrice ? 'Edit special price' : 'Set special price'}</button><button type="button" class="link-btn catalogue-delete-btn" onclick="event.stopPropagation(); deleteCatalogueBook(${book.id})">Remove from catalogue</button>` : ''}
         <button class="add-btn" onclick="event.stopPropagation(); addToCart(${book.id})">Add to quote</button>
       </div>
     </article>
@@ -1558,12 +1601,45 @@ function openBookDetails(bookId) {
   const editPriceButton = document.getElementById('bookDetailEditPrice');
   editPriceButton.style.display = isStaff ? 'inline' : 'none';
   editPriceButton.onclick = () => editSpecialPrice(book.id);
+  const deleteBookButton = document.getElementById('bookDetailDelete');
+  deleteBookButton.hidden = !isStaff;
+  deleteBookButton.onclick = () => deleteCatalogueBook(book.id);
   const cover = document.getElementById('bookDetailCover');
   cover.innerHTML = book.coverUrl ? `<img class="book-detail-cover" src="${formatDriveUrl(book.coverUrl)}" alt="${escapeHtml(book.title)} cover" onerror="this.replaceWith(createPlaceholder(this.alt.replace(/ cover$/, '')))" />` : createPlaceholderMarkup(book.title);
   const detailCover = cover.firstElementChild;
   if (detailCover && !detailCover.classList.contains('cover-placeholder')) detailCover.classList.add('book-detail-cover');
   document.getElementById('bookDetailAdd').onclick = () => { addToCart(book.id); closeBookDetails(); };
   document.getElementById('bookDetailModal').style.display = 'flex';
+}
+
+async function deleteCatalogueBook(bookId) {
+  if (!isStaff) return;
+  const book = catalog.find(entry => Number(entry.id) === Number(bookId));
+  if (!book) {
+    alert('This catalogue entry is no longer available. Refresh the catalogue and try again.');
+    return;
+  }
+  if (!confirm(`Permanently remove "${book.title}" from the catalogue? Existing invoices and orders will keep their saved item details.`)) return;
+  try {
+    const result = await postApi({
+      action: 'manage_admin_record',
+      recordType: 'book',
+      operation: 'delete',
+      bookId: book.id,
+      title: book.title,
+      staffPassword
+    });
+    if (result.status !== 'success') throw new Error(result.message || 'The catalogue book could not be removed.');
+    closeBookDetails();
+    await loadCatalog();
+    if (catalog.some(entry => String(entry.title || '').toLowerCase() === String(book.title).toLowerCase())) {
+      throw new Error('The book was deleted, but the updated catalogue could not be confirmed. Refresh the catalogue before continuing.');
+    }
+    alert(`"${book.title}" was removed from the catalogue.`);
+  } catch (error) {
+    console.error('Catalogue book deletion failed:', error);
+    alert(error.message || 'The catalogue book could not be removed. Refresh and try again.');
+  }
 }
 
 function closeBookDetails() { document.getElementById('bookDetailModal').style.display = 'none'; }
@@ -1848,6 +1924,7 @@ async function generateInvoiceFromModal() {
     currentDocument.type = 'invoice';
     currentDocument.reference = result.reference;
     currentDocument.trackingUrl = result.trackingUrl || currentDocument.trackingUrl;
+    currentDocument.expectedDeliveryDate = result.expectedDeliveryDate || currentDocument.expectedDeliveryDate;
     // The quotation this invoice came from is now converted; force a fresh one for any future order.
     currentQuotationReference = '';
     quotationSignature = '';
@@ -1933,6 +2010,7 @@ async function submitInvoicePaymentFromModal() {
     currentDocument.type = 'receipt';
     currentDocument.reference = result.reference;
     currentDocument.trackingUrl = result.trackingUrl || '';
+    currentDocument.expectedDeliveryDate = result.expectedDeliveryDate || '';
     closePaymentModal();
   } catch (error) {
     console.error('Invoice payment failed:', error);
@@ -1958,15 +2036,11 @@ function renderDocumentHtml(documentData) {
   const financialSummary = type === 'invoice'
     ? `<div class="document-payment-summary"><span>Invoice total <strong>${formatKshs(documentData.total)}</strong></span><span>Payments received <strong>${formatKshs(documentData.amountPaid || 0)}</strong></span><span>Balance due <strong>${formatKshs(documentData.balance ?? documentData.total)}</strong></span></div>`
     : '';
-  const trackingUrl = /^https:\/\/api\.cavalrypublishers\.co\.ke\/admin\/order-status\.html#[a-f0-9]{64}$/.test(String(documentData.trackingUrl || ''))
-    ? documentData.trackingUrl
-    : '';
-  const trackingNote = trackingUrl
-    ? `<div class="document-payment-note">Click this link to track your order: <a href="${escapeHtml(trackingUrl)}">${escapeHtml(trackingUrl)}</a></div>`
-    : '';
   let noteHtml = '';
   if (type === 'invoice' && status !== 'PAID') {
-    noteHtml = `<div class="document-payment-note">Please make payment of <strong>${formatKshs(documentData.balance ?? documentData.total)}</strong> to <strong>Till No. ${TILL_NUMBER}</strong> toward this ${requiresProduction ? 'order' : 'invoice'}.${requiresProduction ? '<br>Production begins after receipt of payment. Delivery within 2 working days.' : ''}</div>`;
+    noteHtml = `<div class="document-payment-note">Please make payment of <strong>${formatKshs(documentData.balance ?? documentData.total)}</strong> to <strong>Till No. ${TILL_NUMBER}</strong> toward this ${requiresProduction ? 'order' : 'invoice'}.${requiresProduction ? '<br>Production begins after receipt of payment. Your order status message includes delivery updates.' : ''}</div>`;
+  } else if (type === 'receipt' && status === 'VOID') {
+    noteHtml = `<div class="document-payment-note">This receipt is VOID and is not counted toward invoice payments.${documentData.voidReason ? `<br>Reason: ${escapeHtml(documentData.voidReason)}` : ''}</div>`;
   } else if (type === 'receipt') {
     const amountPaid = Number(documentData.paymentAmount ?? documentData.total ?? 0);
     const balance = Number(documentData.balance || 0);
@@ -1974,7 +2048,7 @@ function renderDocumentHtml(documentData) {
     const receiptMessage = documentData.orderCompleted
       ? `${paymentDetail} It was a pleasure doing business with you.`
       : requiresProduction
-        ? `${paymentDetail}<br>Your order has been placed and production begins. Delivery within 2 working days.`
+        ? `${paymentDetail}<br>Your order has been placed and production begins.`
         : `${paymentDetail} Thank you for your business.`;
     noteHtml = `<div class="document-payment-note is-success">${receiptMessage}</div>`;
   }
@@ -1991,7 +2065,6 @@ function renderDocumentHtml(documentData) {
     <div class="document-render-total"><span>Total Kshs.</span><strong>${Number(documentData.total || 0).toLocaleString('en-US', { minimumFractionDigits: 2 })}</strong></div>
     ${financialSummary}
     ${noteHtml}
-    ${trackingNote}
     <div class="document-status-stamp ${status === 'PAID' ? '' : 'pending'}">${escapeHtml(status)}</div>`;
 }
 
@@ -2126,7 +2199,66 @@ function isProductionBookItem(item) {
 async function loadProductionQueue(forceRefresh = false) {
   if (!isStaff) return;
   await loadDocumentsTracker(forceRefresh);
+  renderProductionSchedule();
   renderProductionQueue();
+}
+
+function formatOrderDeliveryDate(value) {
+  const match = String(value || '').match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!match) return '';
+  return new Date(Number(match[1]), Number(match[2]) - 1, Number(match[3]), 12)
+    .toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' });
+}
+
+function renderProductionSchedule() {
+  const body = document.getElementById('productionOrdersTableBody');
+  if (!body) return;
+  const orders = allDocuments.filter(doc => doc.type === 'order' && doc.status === 'IN_PRODUCTION');
+  if (!orders.length) {
+    body.innerHTML = '<tr><td colspan="4" class="documents-empty">No active production orders.</td></tr>';
+    return;
+  }
+  body.innerHTML = orders.map(order => `<tr>
+    <td data-label="Order">${escapeHtml(order.reference)}</td>
+    <td data-label="Client">${escapeHtml(order.clientName || 'Valued Client')}</td>
+    <td data-label="Expected delivery"><input class="delivery-date-input" id="deliveryDate-${escapeHtml(order.reference)}" type="date" value="${escapeHtml(order.expectedDeliveryDate || '')}" aria-label="Expected delivery date for ${escapeHtml(order.reference)}"></td>
+    <td data-label="Action"><button class="delivery-date-save" type="button" onclick="saveOrderDeliveryDate('${escapeHtml(order.reference)}')">Save date</button></td>
+  </tr>`).join('');
+}
+
+async function saveOrderDeliveryDate(orderReference) {
+  if (!isStaff) return;
+  const input = document.getElementById(`deliveryDate-${orderReference}`);
+  const expectedDeliveryDate = input ? input.value : '';
+  if (!expectedDeliveryDate) {
+    alert('Choose an expected delivery date.');
+    return;
+  }
+  try {
+    const result = await postApi({ action: 'update_order_delivery_date', orderReference, expectedDeliveryDate, staffPassword });
+    if (result.status !== 'success') throw new Error(result.message || 'Expected delivery date could not be updated.');
+    allDocuments.filter(doc => doc.type === 'order' && doc.reference === orderReference)
+      .forEach(order => { order.expectedDeliveryDate = result.expectedDeliveryDate; });
+    const order = allDocuments.find(doc => doc.type === 'order' && doc.reference === orderReference);
+    if (order) {
+      const parentReference = order.parentReference;
+      const receipt = allDocuments.find(doc => doc.type === 'receipt' && doc.reference === parentReference);
+      const invoiceReference = receipt ? receipt.parentReference : parentReference;
+      allDocuments.filter(doc => doc.type === 'invoice' && doc.reference === invoiceReference)
+        .forEach(invoice => { invoice.expectedDeliveryDate = result.expectedDeliveryDate; });
+      if (currentDocument && currentDocument.reference === invoiceReference) {
+        currentDocument.expectedDeliveryDate = result.expectedDeliveryDate;
+      }
+    }
+    if (currentDocument && currentDocument.reference === orderReference) {
+      currentDocument.expectedDeliveryDate = result.expectedDeliveryDate;
+    }
+    renderProductionSchedule();
+    renderDocumentsTable();
+  } catch (error) {
+    console.error('Updating expected delivery date failed:', error);
+    alert(error.message || 'Expected delivery date could not be updated.');
+  }
 }
 
 function renderProductionQueue() {
@@ -2306,7 +2438,7 @@ function renderMonthlyFinance() {
     return;
   }
   if (periodStatus) periodStatus.textContent = period.label;
-  const revenueRows = allDocuments.filter(doc => doc.type === 'receipt' && isDateInFinancePeriod(doc.timestamp, period));
+  const revenueRows = allDocuments.filter(doc => doc.type === 'receipt' && String(doc.status || '').toUpperCase() !== 'VOID' && isDateInFinancePeriod(doc.timestamp, period));
   const expenseRows = allExpenses.filter(expense => isDateInFinancePeriod(expense.date, period));
   const income = revenueRows.reduce((sum, receipt) => sum + Number(receipt.total || 0), 0);
   const expenses = expenseRows.reduce((sum, expense) => sum + Number(expense.amount || 0), 0);
@@ -2385,7 +2517,7 @@ function downloadMonthlyFinanceReport() {
     document.getElementById('financePeriodStatus').textContent = 'Choose a valid report period before downloading.';
     return;
   }
-  const receipts = allDocuments.filter(doc => doc.type === 'receipt' && isDateInFinancePeriod(doc.timestamp, period));
+  const receipts = allDocuments.filter(doc => doc.type === 'receipt' && String(doc.status || '').toUpperCase() !== 'VOID' && isDateInFinancePeriod(doc.timestamp, period));
   const expenses = allExpenses.filter(expense => isDateInFinancePeriod(expense.date, period));
   const incomeTotal = receipts.reduce((sum, receipt) => sum + Number(receipt.total || 0), 0);
   const expenseTotal = expenses.reduce((sum, expense) => sum + Number(expense.amount || 0), 0);
@@ -2418,10 +2550,10 @@ function renderAccountingSummary() {
   const invoices = allDocuments.filter(doc => doc.type === 'invoice');
   const outstandingInvoices = invoices.filter(doc => doc.status !== 'PAID');
   const outstandingTotal = outstandingInvoices.reduce((sum, doc) => sum + Number(doc.balance ?? doc.total ?? 0), 0);
-  const receipts = allDocuments.filter(doc => doc.type === 'receipt');
+  const receipts = allDocuments.filter(doc => doc.type === 'receipt' && String(doc.status || '').toUpperCase() !== 'VOID');
   const collectedTotal = receipts.reduce((sum, doc) => sum + doc.total, 0);
   const orders = allDocuments.filter(doc => doc.type === 'order');
-  const inProduction = orders.filter(doc => doc.status !== 'COMPLETED');
+  const inProduction = orders.filter(doc => !['COMPLETED', 'ARCHIVED'].includes(String(doc.status || '').toUpperCase()));
   const deliveries = allDocuments.filter(doc => doc.type === 'delivery');
   const productionStartedBeforePayment = invoices.filter(doc =>
     doc.status !== 'PAID' &&
@@ -2452,6 +2584,8 @@ function setDocumentsFilter(filter) {
 
 function documentStatusClass(status) {
   const normalized = String(status || '').toUpperCase();
+  if (normalized === 'VOID') return 'is-void';
+  if (normalized === 'ARCHIVED') return 'is-archived';
   if (normalized === 'PAID' || normalized === 'COMPLETED' || normalized === 'ISSUED') return 'is-paid';
   if (normalized === 'PARTIALLY_PAID') return 'is-partial';
   if (normalized === 'ACTIVE') return 'is-active';
@@ -2495,6 +2629,21 @@ function renderDocumentsTable() {
         actions.push(`<button type="button" onclick="startInvoiceProductionFromList('${escapeHtml(doc.reference)}')">Start production</button>`);
       }
     }
+    if (doc.type === 'order') {
+      if (String(doc.status || '').toUpperCase() === 'ARCHIVED') {
+        actions.push(`<button type="button" onclick="manageAdminRecord('order', '${escapeHtml(doc.reference)}', 'restore')">Restore</button>`);
+      } else {
+        actions.push(`<button type="button" onclick="manageAdminRecord('order', '${escapeHtml(doc.reference)}', 'archive')">Archive order</button>`);
+        if (!String(doc.parentReference || '').trim()) {
+          actions.push(`<button type="button" onclick="manageAdminRecord('order', '${escapeHtml(doc.reference)}', 'delete')">Delete permanently</button>`);
+        }
+      }
+    }
+    if (doc.type === 'receipt') {
+      actions.push(String(doc.status || '').toUpperCase() === 'VOID'
+        ? `<button type="button" onclick="manageAdminRecord('receipt', '${escapeHtml(doc.reference)}', 'restore')">Restore receipt</button>`
+        : `<button type="button" onclick="manageAdminRecord('receipt', '${escapeHtml(doc.reference)}', 'archive')">Void receipt</button>`);
+    }
     const trackingLink = doc.trackingUrl
       ? `<div class="order-tracking-link-cell"><input type="text" aria-label="Order status link for ${escapeHtml(doc.reference)}" value="${escapeHtml(doc.trackingUrl)}" readonly onclick="this.select()"><button type="button" data-reference="${escapeHtml(doc.reference)}" onclick="copyOrderTrackingLink('${escapeHtml(doc.reference)}')">Copy</button></div>`
       : '<span class="order-tracking-link-empty">—</span>';
@@ -2518,6 +2667,40 @@ function viewDocumentFromList(type, reference) {
   openDocumentPreview();
 }
 
+async function manageAdminRecord(recordType, reference, operation) {
+  if (!isStaff || !['order', 'receipt'].includes(recordType) || !reference || !['archive', 'restore', 'delete'].includes(operation)) return;
+  let reason = '';
+  if (recordType === 'receipt' && operation === 'archive') {
+    reason = prompt(`Reason for voiding receipt ${reference}:`, '');
+    if (reason === null) return;
+    reason = reason.trim();
+    if (!reason) {
+      alert('Enter a reason before voiding this receipt.');
+      return;
+    }
+  } else {
+    const record = allDocuments.find(doc => doc.type === recordType && doc.reference === reference);
+    const label = recordType === 'receipt' ? 'receipt (this reduces the invoice total paid)' : 'order (the customer tracking link will stop working)';
+    const verb = operation === 'delete' ? 'Permanently delete' : operation === 'restore' ? 'Restore' : recordType === 'receipt' ? 'Void' : 'Archive';
+    const detail = operation === 'archive' ? ` This ${label} record is retained and can be restored.` : '';
+    if (!confirm(`${verb} ${recordType} ${reference}?${detail}`)) return;
+  }
+  try {
+    const result = await postApi({ action: 'manage_admin_record', recordType, operation, reference, reason, staffPassword });
+    if (result.status !== 'success') throw new Error(result.message || `The ${recordType} could not be updated.`);
+    await loadDocumentsTracker(true);
+    const productionPanel = document.getElementById('productionTabPanel');
+    if (productionPanel && productionPanel.classList.contains('is-active')) await loadProductionQueue(true);
+    alert(operation === 'archive'
+      ? `${recordType === 'receipt' ? 'Receipt voided' : 'Order archived'}.`
+      : operation === 'restore' ? `${recordType === 'receipt' ? 'Receipt restored' : 'Order restored'}.`
+        : `${recordType} deleted.`);
+  } catch (error) {
+    console.error(`Updating ${recordType} record failed:`, error);
+    alert(error.message || `The ${recordType} could not be updated. Please refresh and try again.`);
+  }
+}
+
 async function convertQuoteToInvoiceFromList(quotationReference) {
   const doc = allDocuments.find(entry => entry.type === 'quotation' && entry.reference === quotationReference)
     || (currentDocument && currentDocument.type === 'quotation' && currentDocument.reference === quotationReference ? currentDocument : null);
@@ -2533,6 +2716,7 @@ async function convertQuoteToInvoiceFromList(quotationReference) {
     currentDocument.type = 'invoice';
     currentDocument.reference = result.reference;
     currentDocument.trackingUrl = result.trackingUrl || currentDocument.trackingUrl;
+    currentDocument.expectedDeliveryDate = result.expectedDeliveryDate || currentDocument.expectedDeliveryDate;
     await loadDocumentsTracker();
     openDocumentPreview();
   } catch (error) {
@@ -2551,10 +2735,11 @@ async function startInvoiceProductionFromList(invoiceReference) {
     const updatedInvoice = allDocuments.find(doc => doc.type === 'invoice' && doc.reference === invoiceReference);
     if (updatedInvoice) {
       updatedInvoice.trackingUrl = result.trackingUrl || updatedInvoice.trackingUrl;
+      updatedInvoice.expectedDeliveryDate = result.expectedDeliveryDate || updatedInvoice.expectedDeliveryDate;
       currentDocument = updatedInvoice;
       openDocumentPreview();
     }
-    alert(`${result.alreadyStarted ? 'Production is already running' : 'Production started'} as ${result.orderReference}. ${result.trackingUrl ? 'The invoice now includes the order tracking link. Choose “Share via WhatsApp” to send it to the client.' : 'The invoice remains unpaid.'}`);
+    alert(`${result.alreadyStarted ? 'Production is already running' : 'Production started'} as ${result.orderReference}. ${result.trackingUrl ? 'The WhatsApp message will include the order tracking link. Choose “Share via WhatsApp” to send it to the client.' : 'The invoice remains unpaid.'}`);
   } catch (error) {
     console.error('Starting invoice production failed:', error);
     alert(error.message || 'Production could not be started. Please refresh and try again.');
@@ -2589,6 +2774,7 @@ async function confirmInvoicePaymentFromList(invoiceReference) {
     currentDocument.type = 'receipt';
     currentDocument.reference = result.reference;
     currentDocument.trackingUrl = result.trackingUrl || '';
+    currentDocument.expectedDeliveryDate = result.expectedDeliveryDate || '';
     openDocumentPreview();
   } catch (error) {
     console.error('Invoice payment confirmation failed:', error);
@@ -2631,15 +2817,20 @@ async function shareDocumentViaWhatsApp() {
   if (!currentDocument) return;
   const type = String(currentDocument.type || 'document').toLowerCase();
   const status = String(currentDocument.status || 'PENDING').toUpperCase();
+  if (type === 'receipt' && status === 'VOID') {
+    alert('A voided receipt cannot be shared as a payment confirmation.');
+    return;
+  }
   const isCompletedOrder = type === 'delivery' || (type === 'order' && status === 'COMPLETED');
   const requiresProduction = Boolean(currentDocument.requiresProduction) || (currentDocument.items || []).some(isProductionBookItem);
+  const expectedDelivery = formatOrderDeliveryDate(currentDocument.expectedDeliveryDate);
   const trackingNote = currentDocument.trackingUrl && ['invoice', 'receipt'].includes(type)
-    ? `\n\nClick this link to track your order: ${currentDocument.trackingUrl}`
+    ? `\n\n${expectedDelivery ? `Expected delivery: ${expectedDelivery}\n` : ''}Click this link to track your order: ${currentDocument.trackingUrl}`
     : '';
   const items = (currentDocument.items || []).map((item, index) => `${index + 1}. ${item.quantity} x ${item.title} - Kshs. ${Number(item.total || 0).toFixed(2)}`).join('\n');
   let note = '';
   if (type === 'invoice' && status !== 'PAID') {
-    note = `\n\nInvoice total: ${formatKshs(currentDocument.total)}\nPaid to date: ${formatKshs(currentDocument.amountPaid || 0)}\n*Balance due: ${formatKshs(currentDocument.balance ?? currentDocument.total)}*\nPlease pay the balance to *Till No. ${TILL_NUMBER}*.${requiresProduction ? '\nProduction begins after receipt of payment. Delivery within 2 working days.' : ''}`;
+    note = `\n\nInvoice total: ${formatKshs(currentDocument.total)}\nPaid to date: ${formatKshs(currentDocument.amountPaid || 0)}\n*Balance due: ${formatKshs(currentDocument.balance ?? currentDocument.total)}*\nPlease pay the balance to *Till No. ${TILL_NUMBER}*.${requiresProduction ? '\nProduction begins after receipt of payment.' : ''}`;
   } else if (type === 'receipt') {
     const amountPaid = Number(currentDocument.paymentAmount ?? currentDocument.total ?? 0);
     const balance = Number(currentDocument.balance || 0);
@@ -2647,7 +2838,7 @@ async function shareDocumentViaWhatsApp() {
     note = currentDocument.orderCompleted
       ? `\n\n${paymentSummary} It was a pleasure doing business with you.`
       : requiresProduction
-        ? `\n\n${paymentSummary}\nYour order has been placed and production begins. Delivery within 2 working days.`
+        ? `\n\n${paymentSummary}\nYour order has been placed and production begins.`
         : `\n\n${paymentSummary} Thank you for your business.`;
   }
   note += trackingNote;
