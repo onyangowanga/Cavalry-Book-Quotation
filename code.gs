@@ -237,6 +237,18 @@ function ensureOrderExpectedDeliveryDate(orderRecord) {
   return formatOrderDate(expectedDate);
 }
 
+function getOrderExpectedDeliveryDate(orderRecord) {
+  const savedDate = formatOrderDate(orderRecord.values[14]);
+  if (savedDate) return savedDate;
+  const productionStartedAt = orderRecord.values[0] instanceof Date
+    ? orderRecord.values[0]
+    : new Date(orderRecord.values[0] || new Date());
+  return formatOrderDate(addWorkingDays(
+    isNaN(productionStartedAt.getTime()) ? new Date() : productionStartedAt,
+    3
+  ));
+}
+
 function setOrderExpectedDeliveryDate(orderRecord, value) {
   if (!orderRecord || !orderRecord.sheet || !orderRecord.rowNumber) throw new Error('Order record is required.');
   const expectedDate = parseOrderDate(value);
@@ -276,7 +288,7 @@ function getPublicOrderStatus(ss, trackingToken) {
   if (String(order.status || '').toUpperCase() === 'ARCHIVED') {
     return { status: 'error', message: 'This order is no longer available. Contact Cavalry Publishers for an update.' };
   }
-  const expectedDeliveryDate = ensureOrderExpectedDeliveryDate(orderRecord);
+  const expectedDeliveryDate = getOrderExpectedDeliveryDate(orderRecord);
   let invoiceReference = String(order.parentReference || '').trim();
   let invoiceRecord = findDocument(ss, 'invoices_log', invoiceReference);
   if (!invoiceRecord) {
@@ -499,7 +511,7 @@ function recordInvoicePayment(ss, postData) {
     trackingUrl,
     expectedDeliveryDate: expectedDeliveryDate || '',
     data: documentResponse(findDocument(ss, 'receipts_log', receiptReference), 'receipt'),
-    invoice: withInvoicePaymentTotals(ss, documentResponse(findDocument(ss, 'invoices_log', invoiceData.reference), 'invoice'))
+    invoice: withInvoicePaymentTotal(invoiceData, cumulativePaid)
   };
 }
 
@@ -599,6 +611,54 @@ function withInvoicePaymentTotals(ss, invoiceData) {
   return { ...invoiceData, amountPaid, balance, status: balance === 0 ? 'PAID' : amountPaid > 0 ? 'PARTIALLY_PAID' : 'PENDING' };
 }
 
+function withInvoicePaymentTotal(invoiceData, amountPaid) {
+  const rawBalance = Number(invoiceData.total || 0) - Number(amountPaid || 0);
+  const balance = rawBalance <= 0.005 ? 0 : rawBalance;
+  return {
+    ...invoiceData,
+    amountPaid: Number(amountPaid || 0),
+    balance,
+    status: balance === 0 ? 'PAID' : amountPaid > 0 ? 'PARTIALLY_PAID' : 'PENDING'
+  };
+}
+
+function buildDocumentListContext(ss) {
+  const receiptsSheet = ss.getSheetByName('receipts_log');
+  const receiptRows = receiptsSheet && receiptsSheet.getLastRow() > 1
+    ? receiptsSheet.getDataRange().getValues()
+    : [];
+  const receipts = receiptRows.slice(1);
+  const paidByInvoice = new Map();
+  const invoiceByReceipt = new Map();
+  receipts.forEach(row => {
+    const receiptReference = String(row[1] || '').trim();
+    const invoiceReference = String(row[2] || '').trim();
+    if (receiptReference && invoiceReference) invoiceByReceipt.set(receiptReference, invoiceReference);
+    if (!invoiceReference || String(row[10] || '').toUpperCase() === 'VOID') return;
+    paidByInvoice.set(invoiceReference, (paidByInvoice.get(invoiceReference) || 0) + Number(row[8] || 0));
+  });
+
+  const ordersSheet = ss.getSheetByName('orders_log');
+  const orderRows = ordersSheet && ordersSheet.getLastRow() > 1
+    ? ordersSheet.getDataRange().getValues()
+    : [];
+  const orderByInvoice = new Map();
+  for (let index = 1; index < orderRows.length; index++) {
+    const values = orderRows[index];
+    if (!values[0] && !values[1]) continue;
+    const parentReference = String(values[2] || '').trim();
+    const invoiceReference = invoiceByReceipt.get(parentReference) || parentReference;
+    if (invoiceReference) {
+      orderByInvoice.set(invoiceReference, {
+        sheet: ordersSheet,
+        rowNumber: index + 1,
+        values
+      });
+    }
+  }
+  return { paidByInvoice, orderByInvoice, receiptRows, orderRows };
+}
+
 function getInvoiceOrderRecord(ss, invoiceReference) {
   const ordersSheet = ss.getSheetByName('orders_log');
   if (!ordersSheet || ordersSheet.getLastRow() < 2) return null;
@@ -682,30 +742,12 @@ function findReceiptByPaymentRequest(ss, invoiceReference, paymentRequestId) {
 }
 
 // Reads every row of a document sheet into a flat list for the admin tracking tab.
-function listDocumentsFromSheet(ss, sheetName, type) {
+function listDocumentsFromSheet(ss, sheetName, type, context) {
   const sheet = ss.getSheetByName(sheetName);
   if (!sheet || sheet.getLastRow() < 2) return [];
-  if (sheetName === 'orders_log') {
-    if (!sheet.getRange(1, 14).getValue()) sheet.getRange(1, 14).setValue('Public Tracking Token');
-    if (!sheet.getRange(1, 15).getValue()) sheet.getRange(1, 15).setValue('Expected Delivery Date');
-  }
-  const rows = sheet.getDataRange().getValues();
-  if (sheetName === 'orders_log') {
-    let tokensChanged = false;
-    const trackingTokens = rows.slice(1).map(values => {
-      if (!values[0] && !values[1]) return [values[13] || ''];
-      const existingToken = String(values[13] || '').trim();
-      const token = /^[a-f0-9]{64}$/.test(existingToken)
-        ? existingToken
-        : (Utilities.getUuid() + Utilities.getUuid()).replace(/-/g, '').toLowerCase();
-      if (token !== existingToken) tokensChanged = true;
-      values[13] = token;
-      return [token];
-    });
-    if (tokensChanged) {
-      sheet.getRange(2, 14, trackingTokens.length, 1).setValues(trackingTokens);
-    }
-  }
+  const rows = context && sheetName === 'orders_log' ? context.orderRows
+    : context && sheetName === 'receipts_log' ? context.receiptRows
+      : sheet.getDataRange().getValues();
   const records = [];
   for (let index = 1; index < rows.length; index++) {
     const values = rows[index];
@@ -715,14 +757,20 @@ function listDocumentsFromSheet(ss, sheetName, type) {
     const record = { sheet, rowNumber: index + 1, values, isLegacyQuote };
     const response = documentResponse(record, type);
     if (type === 'order') {
-      response.trackingUrl = getOrderTrackingUrl(String(values[13] || ''));
-      response.expectedDeliveryDate = ensureOrderExpectedDeliveryDate(record);
+      const token = String(values[13] || '').trim();
+      response.trackingUrl = /^[a-f0-9]{64}$/.test(token) ? getOrderTrackingUrl(token) : '';
+      response.expectedDeliveryDate = getOrderExpectedDeliveryDate(record);
     } else if (type === 'invoice') {
-      const invoice = withInvoicePaymentTotals(ss, response);
-      const order = getInvoiceOrderRecord(ss, invoice.reference);
+      const invoice = context
+        ? withInvoicePaymentTotal(response, context.paidByInvoice.get(String(response.reference || '').trim()) || 0)
+        : withInvoicePaymentTotals(ss, response);
+      const order = context
+        ? context.orderByInvoice.get(String(invoice.reference || '').trim())
+        : getInvoiceOrderRecord(ss, invoice.reference);
       if (order) {
-        invoice.trackingUrl = getOrderTrackingUrl(ensureOrderTrackingToken(order));
-        invoice.expectedDeliveryDate = ensureOrderExpectedDeliveryDate(order);
+        const token = String(order.values[13] || '').trim();
+        invoice.trackingUrl = /^[a-f0-9]{64}$/.test(token) ? getOrderTrackingUrl(token) : '';
+        invoice.expectedDeliveryDate = getOrderExpectedDeliveryDate(order);
       }
       records.push(invoice);
       continue;
@@ -861,16 +909,23 @@ function doGet(e) {
 }
 
 function doPost(e) {
-  // Serializes concurrent requests so one execution's sheet writes are always fully committed
-  // before another execution reads them (prevents "quotation not found" races on rapid double actions).
   const lock = LockService.getScriptLock();
-  lock.waitLock(15000);
+  let lockAcquired = false;
   try {
     const ss = SpreadsheetApp.getActiveSpreadsheet();
     const contentType = String(e.postData && e.postData.type || '').toLowerCase();
     const postData = contentType.indexOf('application/x-www-form-urlencoded') >= 0
       ? (e.parameter || {})
       : JSON.parse(e.postData.contents);
+    const readOnlyActions = new Set([
+      'calculate_cost', 'get_document_data', 'list_customers', 'list_documents',
+      'get_public_order_status', 'list_expenses', 'list_payment_sms',
+      'login', 'restore_session', 'logout_session'
+    ]);
+    if (!readOnlyActions.has(String(postData.action || ''))) {
+      lock.waitLock(15000);
+      lockAcquired = true;
+    }
 
     if (postData.action === 'receive_payment_sms') {
       return ContentService
@@ -1526,12 +1581,13 @@ function doPost(e) {
           .createTextOutput(JSON.stringify({ status: 'error', message: 'Staff authorization required.' }))
           .setMimeType(ContentService.MimeType.JSON);
       }
+      const context = buildDocumentListContext(ss);
       const documents = [
-        ...listDocumentsFromSheet(ss, 'quotes_log', 'quotation'),
-        ...listDocumentsFromSheet(ss, 'orders_log', 'order'),
-        ...listDocumentsFromSheet(ss, 'invoices_log', 'invoice'),
-        ...listDocumentsFromSheet(ss, 'receipts_log', 'receipt'),
-        ...listDocumentsFromSheet(ss, 'deliveries_log', 'delivery')
+        ...listDocumentsFromSheet(ss, 'quotes_log', 'quotation', context),
+        ...listDocumentsFromSheet(ss, 'orders_log', 'order', context),
+        ...listDocumentsFromSheet(ss, 'invoices_log', 'invoice', context),
+        ...listDocumentsFromSheet(ss, 'receipts_log', 'receipt', context),
+        ...listDocumentsFromSheet(ss, 'deliveries_log', 'delivery', context)
       ].sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
 
       return ContentService
@@ -1660,6 +1716,6 @@ function doPost(e) {
       .createTextOutput(JSON.stringify({ status: 'error', message: err.toString() }))
       .setMimeType(ContentService.MimeType.JSON);
   } finally {
-    lock.releaseLock();
+    if (lockAcquired) lock.releaseLock();
   }
 }

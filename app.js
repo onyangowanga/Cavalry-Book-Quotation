@@ -3,6 +3,10 @@ const CATALOG_API_URL = "https://api.cavalrypublishers.co.ke/api/v1/catalog";
 const ADMIN_API_URL = "https://api.cavalrypublishers.co.ke/api/v1/admin";
 const COMPANY_WHATSAPP = "254726953346"; // Replace with your primary business WhatsApp phone number
 const TILL_NUMBER = "5675635"; // Buy Goods till number clients pay to
+let adminCacheInvalidation = Promise.resolve();
+let preparedDocumentImage = null;
+let preparedDocumentImagePromise = Promise.resolve(null);
+let preparedDocumentImageKey = '';
 const ADMIN_MUTATION_ACTIONS = new Set([
   'add_expense', 'advance_production_stage', 'complete_order', 'confirm_invoice_payment',
   'confirm_reminder_sent', 'convert_quote_to_invoice', 'delete_quotation', 'manage_admin_record',
@@ -29,20 +33,17 @@ async function postApi(payload) {
     const result = JSON.parse(text);
     const sessionToken = String(payload.staffPassword || staffPassword);
     if (result.status === 'success' && ADMIN_MUTATION_ACTIONS.has(payload.action) && sessionToken.startsWith('SESSION-')) {
-      try {
-        const refreshCatalogue = payload.action === 'manage_admin_record' && payload.recordType === 'book';
-        const invalidation = await fetch(`${ADMIN_API_URL}/invalidate`, {
+      const refreshCatalogue = payload.action === 'manage_admin_record' && payload.recordType === 'book';
+      adminCacheInvalidation = adminCacheInvalidation.then(() => fetch(`${ADMIN_API_URL}/invalidate`, {
           method: 'POST',
           headers: { Authorization: `Bearer ${sessionToken}` },
           body: JSON.stringify({ refreshCatalogue }),
-          signal: AbortSignal.timeout(refreshCatalogue ? 25000 : 3000)
-        });
-        if (!invalidation.ok) {
-          console.warn('Admin data cache invalidation returned HTTP', invalidation.status);
-        }
-      } catch (error) {
-        console.warn('Admin data cache could not be invalidated; fresh reads will still use Apps Script:', error);
-      }
+          signal: AbortSignal.timeout(refreshCatalogue ? 25000 : 10000)
+        }).then(response => {
+          if (!response.ok) console.warn('Admin data cache invalidation returned HTTP', response.status);
+        }).catch(error => {
+          console.warn('Admin data cache could not be invalidated; fresh reads will still use Apps Script:', error);
+        }));
     }
     return result;
   } catch (parseError) {
@@ -65,6 +66,7 @@ async function registerAdminApiSession(token, expiresAt) {
 }
 
 async function readAdminData(payload, forceRefresh = false) {
+  await adminCacheInvalidation;
   if (!isStaff || !staffPassword.startsWith('SESSION-')) return postApi(payload);
   try {
     const response = await fetch(`${ADMIN_API_URL}/read`, {
@@ -91,6 +93,46 @@ function getAdminReadStatus(result, label = 'Updated') {
   const updatedAt = result.cacheUpdatedAt ? new Date(result.cacheUpdatedAt) : new Date();
   const time = updatedAt.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
   return result.cacheSource === 'postgresql-cache' ? `VPS cache · ${time}` : `${label} ${time}`;
+}
+
+function replaceAdminDocument(document) {
+  if (!document || !document.type || !document.reference) return;
+  const index = allDocuments.findIndex(entry =>
+    entry.type === document.type && entry.reference === document.reference
+  );
+  if (index >= 0) allDocuments[index] = { ...allDocuments[index], ...document };
+  else allDocuments.unshift(document);
+  try {
+    sessionStorage.setItem(DOCUMENTS_CACHE_KEY, JSON.stringify({
+      documents: allDocuments,
+      savedAt: new Date().toISOString()
+    }));
+  } catch (error) {
+    console.warn('Updated document cache could not be saved in this tab:', error);
+  }
+  renderAccountingSummary();
+  renderDocumentsTable();
+}
+
+function refreshAdminDocumentsInBackground() {
+  window.setTimeout(() => {
+    if (isStaff) loadDocumentsTracker(true);
+  }, 1000);
+}
+
+function applyPaymentResult(result) {
+  if (result.invoice) replaceAdminDocument(result.invoice);
+  if (result.data) {
+    const receipt = {
+      ...result.data,
+      type: 'receipt',
+      reference: result.reference || result.data.reference,
+      trackingUrl: result.trackingUrl || '',
+      expectedDeliveryDate: result.expectedDeliveryDate || ''
+    };
+    replaceAdminDocument(receipt);
+  }
+  refreshAdminDocumentsInBackground();
 }
 
 // drive.google.com/thumbnail links are blocked by CORS; googleusercontent.com serves the same image without that restriction.
@@ -537,7 +579,8 @@ function switchAppTab(tabName) {
     button.setAttribute('aria-selected', String(isActive));
   });
   if (requestedTab === 'documents') {
-    loadDocumentsTracker().then(loadPaymentSmsInbox);
+    loadDocumentsTracker();
+    loadPaymentSmsInbox();
   }
   if (requestedTab === 'catalogue' && IS_ADMIN_PORTAL && !catalog.length) loadCatalog();
   if (requestedTab === 'production') loadProductionQueue();
@@ -648,7 +691,14 @@ async function managePaymentSms(id, operation) {
     const result = await postApi({ action: 'manage_admin_record', recordType: 'payment_sms', operation, reference: id, staffPassword });
     if (result.status !== 'success') throw new Error(result.message || 'The payment SMS could not be updated.');
     if (operation === 'restore') paymentSmsFilter = 'ALL';
-    await loadPaymentSmsInbox(true);
+    if (operation === 'delete') {
+      paymentSmsEntries = paymentSmsEntries.filter(entry => entry.id !== id);
+    } else {
+      paymentSmsEntries = paymentSmsEntries.map(entry => entry.id === id
+        ? { ...entry, status: operation === 'archive' ? 'ARCHIVED' : 'PENDING' }
+        : entry);
+    }
+    renderPaymentSmsInbox();
     if (status) status.textContent = 'Payment SMS updated.';
   } catch (error) {
     console.error('Updating payment SMS record failed:', error);
@@ -730,8 +780,11 @@ async function linkPaymentSmsToInvoice(smsId) {
     });
     if (result.status !== 'success') throw new Error(result.message || 'The verified SMS could not be linked.');
     linkingPaymentSmsId = '';
-    await loadDocumentsTracker();
-    await loadPaymentSmsInbox();
+    applyPaymentResult(result);
+    paymentSmsEntries = paymentSmsEntries.map(entry => entry.id === smsId
+      ? { ...entry, status: 'LINKED', linkedInvoice: invoiceReference, receiptReference: result.reference }
+      : entry);
+    renderPaymentSmsInbox();
     if (status) status.textContent = `Payment recorded as receipt ${result.reference}.`;
   } catch (error) {
     console.error('Linking verified SMS to invoice failed:', error);
@@ -750,7 +803,10 @@ async function updatePaymentSmsStatus(id, reviewStatus) {
     const result = await postApi({ action: 'update_payment_sms_status', staffPassword, id, reviewStatus });
     if (result.status !== 'success') throw new Error(result.message || 'The review status could not be saved.');
     if (reviewStatus === 'VERIFIED') paymentSmsFilter = 'VERIFIED';
-    await loadPaymentSmsInbox();
+    paymentSmsEntries = paymentSmsEntries.map(entry => entry.id === id
+      ? { ...entry, status: reviewStatus, reviewedAt: new Date().toISOString() }
+      : entry);
+    renderPaymentSmsInbox();
   } catch (error) {
     console.error('Updating forwarded payment SMS review failed:', error);
     if (status) status.textContent = error.message || 'Review status could not be saved.';
@@ -2006,6 +2062,7 @@ async function submitInvoicePaymentFromModal() {
       paymentReference: method === 'mpesa' ? phone : transactionCode
     });
     if (result.status !== 'success') throw new Error(result.message || 'Payment confirmation failed.');
+    applyPaymentResult(result);
     currentDocument = result.data;
     currentDocument.type = 'receipt';
     currentDocument.reference = result.reference;
@@ -2071,7 +2128,8 @@ function renderDocumentHtml(documentData) {
 function openDocumentPreview() {
   if (!currentDocument) return;
   document.getElementById('documentPreviewTitle').textContent = `${currentDocument.type || 'Document'} ${currentDocument.reference || ''}`;
-  document.getElementById('documentRenderSurface').innerHTML = renderDocumentHtml(currentDocument);
+  const renderSurface = document.getElementById('documentRenderSurface');
+  renderSurface.innerHTML = renderDocumentHtml(currentDocument);
   const isPendingInvoice = currentDocument.type === 'invoice' && currentDocument.status !== 'PAID';
   const isActiveQuotation = isStaff && currentDocument.type === 'quotation' && currentDocument.status === 'ACTIVE';
   const canStartProduction = isStaff && isPendingInvoice && (currentDocument.items || []).some(isProductionBookItem) && !invoiceHasProductionOrder(currentDocument.reference);
@@ -2081,6 +2139,33 @@ function openDocumentPreview() {
   document.getElementById('confirmDocumentPaymentButton').hidden = !(isStaff && isPendingInvoice);
   document.getElementById('copyOrderTrackingLinkButton').hidden = !currentDocument.trackingUrl;
   document.getElementById('documentPreviewModal').style.display = 'flex';
+  window.requestAnimationFrame(() => prepareDocumentShareImage(renderSurface));
+}
+
+function getDocumentImageKey(documentData) {
+  return `${documentData.type || 'document'}:${documentData.reference || ''}`;
+}
+
+function prepareDocumentShareImage(surface) {
+  const documentKey = getDocumentImageKey(currentDocument || {});
+  preparedDocumentImage = null;
+  preparedDocumentImageKey = documentKey;
+  preparedDocumentImagePromise = (async () => {
+    try {
+      const canvas = await html2canvas(surface, {
+        backgroundColor: '#ffffff', scale: 1.5, useCORS: true, logging: false
+      });
+      const blob = await new Promise(resolve => canvas.toBlob(resolve, 'image/jpeg', .88));
+      if (!blob) throw new Error('The document image could not be created.');
+      if (currentDocument && getDocumentImageKey(currentDocument) === documentKey) {
+        preparedDocumentImage = blob;
+      }
+      return blob;
+    } catch (error) {
+      console.warn('Document image pre-render failed:', error);
+      return null;
+    }
+  })();
 }
 
 function closeDocumentPreview() { document.getElementById('documentPreviewModal').style.display = 'none'; }
@@ -2255,6 +2340,7 @@ async function saveOrderDeliveryDate(orderReference) {
     }
     renderProductionSchedule();
     renderDocumentsTable();
+    refreshAdminDocumentsInBackground();
   } catch (error) {
     console.error('Updating expected delivery date failed:', error);
     alert(error.message || 'Expected delivery date could not be updated.');
@@ -2316,8 +2402,18 @@ async function updateProductionStage(payload) {
   try {
     const result = await postApi({ ...payload, staffPassword });
     if (result.status !== 'success') throw new Error(result.message || 'Could not update production stages.');
-    await loadDocumentsTracker();
+    const previousOrder = allDocuments.find(doc => doc.type === 'order' && doc.reference === payload.orderReference);
+    if (result.data) {
+      replaceAdminDocument({
+        ...previousOrder,
+        ...result.data,
+        type: 'order',
+        trackingUrl: previousOrder ? previousOrder.trackingUrl : '',
+        expectedDeliveryDate: previousOrder ? previousOrder.expectedDeliveryDate : ''
+      });
+    }
     renderProductionQueue();
+    if (result.completed) refreshAdminDocumentsInBackground();
     if (result.completed) alert(`All production items are complete. Delivery note ${result.deliveryReference} created.`);
   } catch (error) {
     alert(error.message || 'Could not update production stages.');
@@ -2328,8 +2424,18 @@ async function markProductionItemPrinted(orderReference, itemIndex) {
   try {
     const result = await postApi({ action: 'mark_order_item_printed', orderReference, itemIndex, staffPassword });
     if (result.status !== 'success') throw new Error(result.message || 'Could not update print status.');
-    await loadDocumentsTracker();
+    const previousOrder = allDocuments.find(doc => doc.type === 'order' && doc.reference === orderReference);
+    if (result.data) {
+      replaceAdminDocument({
+        ...previousOrder,
+        ...result.data,
+        type: 'order',
+        trackingUrl: previousOrder ? previousOrder.trackingUrl : '',
+        expectedDeliveryDate: previousOrder ? previousOrder.expectedDeliveryDate : ''
+      });
+    }
     renderProductionQueue();
+    if (result.completed) refreshAdminDocumentsInBackground();
     if (result.completed) alert(`All books are printed. Order completed and delivery note ${result.deliveryReference} created.`);
   } catch (error) {
     console.error('Production update failed:', error);
@@ -2769,7 +2875,7 @@ async function confirmInvoicePaymentFromList(invoiceReference) {
   try {
     const result = await postApi({ action: 'confirm_invoice_payment', invoiceReference, paymentAmount, paymentRequestId: crypto.randomUUID ? crypto.randomUUID() : `PAY-${Date.now()}-${Math.random().toString(36).slice(2)}`, paymentMethod, paymentReference });
     if (result.status !== 'success') throw new Error(result.message || 'Payment confirmation failed.');
-    await loadDocumentsTracker();
+    applyPaymentResult(result);
     currentDocument = result.data;
     currentDocument.type = 'receipt';
     currentDocument.reference = result.reference;
@@ -2846,30 +2952,44 @@ async function shareDocumentViaWhatsApp() {
     ? 'Your order is complete and ready for collection, It was a pleasure doing business with you..'
     : `*CAVALRY PUBLISHERS ${type.toUpperCase()}*\nReference: ${currentDocument.reference}\nStatus: ${status}\nClient: ${currentDocument.clientName || 'Valued Client'}\n\n${items}\n\n*TOTAL: Kshs. ${Number(currentDocument.total || 0).toLocaleString('en-US', { minimumFractionDigits: 2 })}*${note}`;
 
+  const documentKey = getDocumentImageKey(currentDocument);
+  const fileName = `Cavalry-${type}-${currentDocument.reference}.jpg`;
+  let blob = preparedDocumentImageKey === documentKey ? preparedDocumentImage : null;
   try {
-    const canvas = await html2canvas(document.getElementById('documentRenderSurface'), { backgroundColor: '#ffffff', scale: 2, useCORS: true });
-    const blob = await new Promise(resolve => canvas.toBlob(resolve, 'image/jpeg', .95));
-    const fileName = `Cavalry-${currentDocument.type}-${currentDocument.reference}.jpg`;
-    const file = new File([blob], fileName, { type: 'image/jpeg' });
-
-    // Web Share API lets supported devices (mostly mobile) share the image and text together in one WhatsApp bubble.
-    if (navigator.canShare && navigator.canShare({ files: [file] })) {
-      await navigator.share({ files: [file], text: message, title: `Cavalry Publishers ${currentDocument.type}` });
-      return;
+    if (!blob && preparedDocumentImageKey === documentKey) blob = await preparedDocumentImagePromise;
+    if (!blob) {
+      const canvas = await html2canvas(document.getElementById('documentRenderSurface'), {
+        backgroundColor: '#ffffff', scale: 1.5, useCORS: true, logging: false
+      });
+      blob = await new Promise(resolve => canvas.toBlob(resolve, 'image/jpeg', .88));
     }
-
-    // Desktop/unsupported browsers: download the image and open WhatsApp with the text pre-filled for manual attachment.
-    const link = document.createElement('a');
-    link.download = fileName;
-    link.href = URL.createObjectURL(blob);
-    link.click();
-    const fallbackMessage = isCompletedOrder ? message : `${message}\n\n(Please attach the image just downloaded: ${fileName})`;
-    window.open(`https://wa.me/${COMPANY_WHATSAPP}?text=${encodeURIComponent(fallbackMessage)}`, '_blank');
+    if (!blob) throw new Error('The document image could not be created.');
+    const file = new File([blob], fileName, { type: 'image/jpeg' });
+    if (navigator.canShare && navigator.canShare({ files: [file] }) && navigator.share) {
+      try {
+        await navigator.share({ files: [file], text: message, title: `Cavalry Publishers ${type}` });
+        return;
+      } catch (error) {
+        if (error.name === 'AbortError') return;
+        console.warn('Android/browser file sharing failed; opening WhatsApp with a manual-attachment fallback:', error);
+      }
+    }
   } catch (error) {
-    if (error.name === 'AbortError') return;
-    console.error('WhatsApp share failed:', error);
-    alert('The document could not be shared. Please try again.');
+    console.warn('Document image could not be prepared; opening WhatsApp with the message only:', error);
   }
+
+  if (blob) {
+    const downloadLink = document.createElement('a');
+    downloadLink.download = fileName;
+    downloadLink.href = URL.createObjectURL(blob);
+    downloadLink.click();
+    window.setTimeout(() => URL.revokeObjectURL(downloadLink.href), 60000);
+  }
+  const fallbackMessage = blob && !isCompletedOrder
+    ? `${message}\n\nPlease attach the downloaded document image: ${fileName}`
+    : message;
+  window.location.assign(`https://wa.me/${COMPANY_WHATSAPP}?text=${encodeURIComponent(fallbackMessage)}`);
+  if (!blob) alert('WhatsApp opened with the message. The document image could not be prepared, so please share the document separately.');
 }
 
 function updateCartFab() {
