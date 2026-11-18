@@ -9,6 +9,7 @@ const SOURCE_URL = process.env.CATALOG_SOURCE_URL || '';
 const SYNC_INTERVAL_MS = Number(process.env.SYNC_INTERVAL_MS || 5 * 60 * 1000);
 const ADMIN_READ_CACHE_TTL_MS = Number(process.env.ADMIN_READ_CACHE_TTL_MS || 120000);
 const PAYMENT_SMS_CACHE_TTL_MS = Number(process.env.PAYMENT_SMS_CACHE_TTL_MS || 15000);
+const PUBLIC_ORDER_STATUS_CACHE_TTL_MS = Number(process.env.PUBLIC_ORDER_STATUS_CACHE_TTL_MS || 30000);
 const ADMIN_SESSION_MAX_AGE_MS = 6 * 60 * 60 * 1000;
 const ADMIN_READ_ACTIONS = new Set([
   'get_document_data',
@@ -98,10 +99,21 @@ async function ensureSchema() {
       updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     )
   `);
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS public_order_status_cache (
+      token_hash TEXT PRIMARY KEY,
+      payload JSONB NOT NULL,
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `);
 }
 
 function hashAdminToken(token) {
   return createHash('sha256').update(token).digest('hex');
+}
+
+function isValidOrderTrackingToken(token) {
+  return /^[a-f0-9]{64}$/.test(String(token || ''));
 }
 
 async function readJsonBody(request) {
@@ -220,6 +232,43 @@ async function getAdminRead(cacheKey, action, payload, session, forceRefresh) {
   return readRequest;
 }
 
+async function getPublicOrderStatus(token, forceRefresh = false) {
+  const tokenHash = hashAdminToken(token);
+  if (!forceRefresh) {
+    const { rows } = await pool.query(
+      `SELECT payload, updated_at
+       FROM public_order_status_cache
+       WHERE token_hash = $1
+         AND updated_at > NOW() - ($2::double precision * INTERVAL '1 millisecond')`,
+      [tokenHash, PUBLIC_ORDER_STATUS_CACHE_TTL_MS]
+    );
+    if (rows[0]) {
+      return {
+        ...rows[0].payload,
+        cacheUpdatedAt: rows[0].updated_at
+      };
+    }
+  }
+
+  const result = await callAppsScript({
+    action: 'get_public_order_status',
+    trackingToken: token
+  });
+  if (result.status !== 'success') {
+    const error = new Error(result.message || 'This order could not be found.');
+    error.statusCode = result.message === 'This order could not be found.' ? 404 : 502;
+    throw error;
+  }
+  await pool.query(
+    `INSERT INTO public_order_status_cache (token_hash, payload, updated_at)
+     VALUES ($1, $2::jsonb, NOW())
+     ON CONFLICT (token_hash) DO UPDATE
+     SET payload = EXCLUDED.payload, updated_at = NOW()`,
+    [tokenHash, JSON.stringify(result)]
+  );
+  return { ...result, cacheUpdatedAt: new Date().toISOString() };
+}
+
 function validateCatalogue(data) {
   if (!Array.isArray(data) || data.length === 0) {
     throw new Error('The catalogue source returned no books; the cached catalogue was left unchanged.');
@@ -317,6 +366,25 @@ async function handleRequest(request, response) {
   }
 
   const requestUrl = new URL(request.url, 'http://localhost');
+  if (request.method === 'POST' && requestUrl.pathname === '/api/v1/order-status') {
+    const body = await readJsonBody(request);
+    const token = String(body.token || '');
+    if (!isValidOrderTrackingToken(token)) {
+      sendJson(response, 400, { status: 'error', message: 'This order link is invalid.' }, origin);
+      return;
+    }
+    try {
+      sendJson(response, 200, await getPublicOrderStatus(token, body.forceRefresh === true), origin);
+    } catch (error) {
+      const statusCode = error.statusCode || 503;
+      if (statusCode >= 500) console.error('Public order status lookup failed:', error.message);
+      const message = statusCode >= 500 ? 'Order details are temporarily unavailable. Please try again.'
+        : statusCode === 404 ? 'This order could not be found.' : error.message;
+      sendJson(response, statusCode, { status: 'error', message }, origin);
+    }
+    return;
+  }
+
   if (request.method === 'POST' && requestUrl.pathname === '/api/v1/admin/session') {
     const body = await readJsonBody(request);
     const token = String(body.staffPassword || '');
@@ -382,6 +450,7 @@ async function handleRequest(request, response) {
     }
     try {
       await pool.query('DELETE FROM admin_read_cache');
+      await pool.query('DELETE FROM public_order_status_cache');
       sendJson(response, 200, { status: 'success' }, origin);
     } catch (error) {
       console.error('Admin read cache invalidation failed:', error.message);
@@ -491,4 +560,9 @@ if (require.main === module) {
   });
 }
 
-module.exports = { adminReadCacheKey, getBearerToken, validateCatalogue };
+module.exports = {
+  adminReadCacheKey,
+  getBearerToken,
+  isValidOrderTrackingToken,
+  validateCatalogue
+};

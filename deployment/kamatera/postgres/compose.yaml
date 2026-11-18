@@ -17,6 +17,7 @@ services:
       SYNC_INTERVAL_MS: "300000"
       ADMIN_READ_CACHE_TTL_MS: "120000"
       PAYMENT_SMS_CACHE_TTL_MS: "15000"
+      PUBLIC_ORDER_STATUS_CACHE_TTL_MS: "30000"
     ports:
       - "127.0.0.1:3100:3000"
     networks:

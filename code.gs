@@ -180,12 +180,84 @@ function createDocumentReference(prefix) {
 
 function getDocumentSheet(ss, name) {
   const headers = ['Timestamp', 'Reference', 'Parent Reference', 'Client Name', 'Client Phone', 'Items JSON', 'Subtotal (Kshs)', 'Discount (Kshs)', 'Total (Kshs)', 'Tax / Breakdown', 'Status', 'Payment Method', 'Payment Reference'];
+  if (name === 'orders_log') headers.push('Public Tracking Token');
   let sheet = ss.getSheetByName(name);
   if (!sheet) {
     sheet = ss.insertSheet(name);
     sheet.appendRow(headers);
+  } else if (name === 'orders_log' && !sheet.getRange(1, 14).getValue()) {
+    sheet.getRange(1, 14).setValue(headers[13]);
   }
   return sheet;
+}
+
+function getOrderTrackingUrl(token) {
+  return `https://api.cavalrypublishers.co.ke/admin/order-status.html#${token}`;
+}
+
+function ensureOrderTrackingToken(orderRecord) {
+  if (!orderRecord || !orderRecord.sheet || !orderRecord.rowNumber) throw new Error('Order record is required.');
+  const existingToken = String(orderRecord.values[13] || '').trim();
+  if (/^[a-f0-9]{64}$/.test(existingToken)) return existingToken;
+  const token = (Utilities.getUuid() + Utilities.getUuid()).replace(/-/g, '').toLowerCase();
+  orderRecord.sheet.getRange(orderRecord.rowNumber, 14).setValue(token);
+  orderRecord.values[13] = token;
+  return token;
+}
+
+function getPublicOrderStatus(ss, trackingToken) {
+  const token = String(trackingToken || '').trim().toLowerCase();
+  if (!/^[a-f0-9]{64}$/.test(token)) return { status: 'error', message: 'This order link is invalid.' };
+  const sheet = ss.getSheetByName('orders_log');
+  if (!sheet || sheet.getLastRow() < 2 || sheet.getLastColumn() < 14) {
+    return { status: 'error', message: 'This order could not be found.' };
+  }
+  const tokenCell = sheet.getRange(2, 14, sheet.getLastRow() - 1, 1)
+    .createTextFinder(token).matchEntireCell(true).useRegularExpression(false).findNext();
+  if (!tokenCell) return { status: 'error', message: 'This order could not be found.' };
+
+  const orderRecord = findDocument(ss, 'orders_log', sheet.getRange(tokenCell.getRow(), 2).getValue());
+  if (!orderRecord) return { status: 'error', message: 'This order could not be found.' };
+  const order = documentResponse(orderRecord, 'order');
+  let invoiceReference = String(order.parentReference || '').trim();
+  let invoiceRecord = findDocument(ss, 'invoices_log', invoiceReference);
+  if (!invoiceRecord) {
+    const receipt = findDocument(ss, 'receipts_log', invoiceReference);
+    invoiceReference = receipt ? String(receipt.values[2] || '').trim() : '';
+    invoiceRecord = findDocument(ss, 'invoices_log', invoiceReference);
+  }
+  const invoice = invoiceRecord
+    ? withInvoicePaymentTotals(ss, documentResponse(invoiceRecord, 'invoice'))
+    : null;
+  const productionItems = (order.items || []).filter(isProductionItem).map(item => {
+    const stages = Array.isArray(item.productionStages) ? item.productionStages : [];
+    const stageIndex = Number(item.productionStageIndex || 0);
+    const stage = item.printed ? 'Completed' : stages[stageIndex] || 'In production';
+    return {
+      title: String(item.title || item.name || 'Order item'),
+      quantity: Math.max(1, Number(item.quantity) || 1),
+      mode: String(item.mode || ''),
+      size: String(item.size || ''),
+      status: stage,
+      completed: item.printed === true
+    };
+  });
+  const paymentTotal = invoice ? invoice.total : order.total;
+  const amountPaid = invoice ? invoice.amountPaid : 0;
+  const balance = invoice ? invoice.balance : paymentTotal;
+  return {
+    status: 'success',
+    data: {
+      orderReference: order.reference,
+      createdAt: order.timestamp instanceof Date ? order.timestamp.toISOString() : String(order.timestamp || ''),
+      orderStatus: String(order.status || 'IN_PRODUCTION'),
+      paymentStatus: invoice ? invoice.status : 'UNKNOWN',
+      total: Number(paymentTotal || 0),
+      amountPaid: Number(amountPaid || 0),
+      balance: Number(balance || 0),
+      items: productionItems
+    }
+  };
 }
 
 function documentRecord(postData, reference, parentReference, status, paymentMethod, paymentReference) {
@@ -280,11 +352,13 @@ function recordInvoicePayment(ss, postData) {
   const paymentRequestId = String(postData.paymentRequestId || '').trim();
   const duplicateReceipt = findReceiptByPaymentRequest(ss, invoiceData.reference, paymentRequestId);
   if (duplicateReceipt) {
+    const existingOrder = getInvoiceOrderRecord(ss, invoiceData.reference);
     return {
       status: 'success',
       documentType: 'receipt',
       reference: duplicateReceipt.values[1],
-      orderReference: '',
+      orderReference: existingOrder ? String(existingOrder.values[1] || '') : '',
+      trackingUrl: existingOrder ? getOrderTrackingUrl(ensureOrderTrackingToken(existingOrder)) : '',
       data: documentResponse(duplicateReceipt, 'receipt'),
       invoice: invoiceData,
       idempotent: true
@@ -334,10 +408,19 @@ function recordInvoicePayment(ss, postData) {
   }, receiptReference, invoiceData.reference, 'PAID', postData.paymentMethod, postData.paymentReference));
 
   let orderReference = '';
+  let trackingUrl = '';
   if (productionItems.length && !previousOrderStatus) {
     orderReference = createDocumentReference('ORD');
     const orderSheet = getDocumentSheet(ss, 'orders_log');
     orderSheet.appendRow(documentRecord({ ...invoiceData, items: invoiceData.items }, orderReference, receiptReference, 'IN_PRODUCTION', postData.paymentMethod, postData.paymentReference));
+    const orderRecord = findDocument(ss, 'orders_log', orderReference);
+    trackingUrl = getOrderTrackingUrl(ensureOrderTrackingToken(orderRecord));
+  } else if (productionItems.length) {
+    const existingOrder = getInvoiceOrderRecord(ss, invoiceData.reference);
+    if (existingOrder) {
+      orderReference = String(existingOrder.values[1] || '');
+      trackingUrl = getOrderTrackingUrl(ensureOrderTrackingToken(existingOrder));
+    }
   }
   SpreadsheetApp.flush();
 
@@ -346,6 +429,7 @@ function recordInvoicePayment(ss, postData) {
     documentType: 'receipt',
     reference: receiptReference,
     orderReference,
+    trackingUrl,
     data: documentResponse(findDocument(ss, 'receipts_log', receiptReference), 'receipt'),
     invoice: withInvoicePaymentTotals(ss, documentResponse(findDocument(ss, 'invoices_log', invoiceData.reference), 'invoice'))
   };
@@ -362,7 +446,7 @@ function findDocument(ss, sheetName, reference) {
   const match = sheet.createTextFinder(trimmedReference).matchEntireCell(true).useRegularExpression(false).findNext();
   if (!match) return null;
   const rowNumber = match.getRow();
-  const width = Math.max(sheet.getLastColumn(), 13);
+  const width = Math.max(sheet.getLastColumn(), sheetName === 'orders_log' ? 14 : 13);
   const values = sheet.getRange(rowNumber, 1, 1, width).getValues()[0];
   const isLegacyQuote = sheetName === 'quotes_log' && match.getColumn() !== 2;
   return { sheet, rowNumber, values, isLegacyQuote };
@@ -516,7 +600,26 @@ function findReceiptByPaymentRequest(ss, invoiceReference, paymentRequestId) {
 function listDocumentsFromSheet(ss, sheetName, type) {
   const sheet = ss.getSheetByName(sheetName);
   if (!sheet || sheet.getLastRow() < 2) return [];
+  if (sheetName === 'orders_log' && !sheet.getRange(1, 14).getValue()) {
+    sheet.getRange(1, 14).setValue('Public Tracking Token');
+  }
   const rows = sheet.getDataRange().getValues();
+  if (sheetName === 'orders_log') {
+    let tokensChanged = false;
+    const trackingTokens = rows.slice(1).map(values => {
+      if (!values[0] && !values[1]) return [values[13] || ''];
+      const existingToken = String(values[13] || '').trim();
+      const token = /^[a-f0-9]{64}$/.test(existingToken)
+        ? existingToken
+        : (Utilities.getUuid() + Utilities.getUuid()).replace(/-/g, '').toLowerCase();
+      if (token !== existingToken) tokensChanged = true;
+      values[13] = token;
+      return [token];
+    });
+    if (tokensChanged) {
+      sheet.getRange(2, 14, trackingTokens.length, 1).setValues(trackingTokens);
+    }
+  }
   const records = [];
   for (let index = 1; index < rows.length; index++) {
     const values = rows[index];
@@ -525,7 +628,16 @@ function listDocumentsFromSheet(ss, sheetName, type) {
     const isLegacyQuote = sheetName === 'quotes_log' && !/^QUO-/i.test(String(values[1] || '').trim());
     const record = { sheet, rowNumber: index + 1, values, isLegacyQuote };
     const response = documentResponse(record, type);
-    records.push(type === 'invoice' ? withInvoicePaymentTotals(ss, response) : response);
+    if (type === 'order') {
+      response.trackingUrl = getOrderTrackingUrl(String(values[13] || ''));
+    } else if (type === 'invoice') {
+      const invoice = withInvoicePaymentTotals(ss, response);
+      const order = getInvoiceOrderRecord(ss, invoice.reference);
+      if (order) invoice.trackingUrl = getOrderTrackingUrl(ensureOrderTrackingToken(order));
+      records.push(invoice);
+      continue;
+    }
+    records.push(response);
   }
   return records;
 }
@@ -690,6 +802,12 @@ function doPost(e) {
       const username = token.startsWith('SESSION-') ? CacheService.getScriptCache().get(token) : null;
       if (postData.action === 'logout_session' && username) CacheService.getScriptCache().remove(token);
       return ContentService.createTextOutput(JSON.stringify({ status: username ? 'success' : 'error', username: username || '' })).setMimeType(ContentService.MimeType.JSON);
+    }
+
+    if (postData.action === 'get_public_order_status') {
+      return ContentService
+        .createTextOutput(JSON.stringify(getPublicOrderStatus(ss, postData.trackingToken)))
+        .setMimeType(ContentService.MimeType.JSON);
     }
 
     // -------------------------------------------------------------
@@ -894,14 +1012,17 @@ function doPost(e) {
       quote.sheet.getRange(quote.rowNumber, quote.isLegacyQuote ? quote.values.length + 1 : 11).setValue('CONVERTED');
 
       let orderReference = '';
+      let trackingUrl = '';
       if (postData.startProduction === true && items.some(isProductionItem)) {
         orderReference = createDocumentReference('ORD');
         const invoiceData = documentResponse(findDocument(ss, 'invoices_log', invoiceReference), 'invoice');
-        getDocumentSheet(ss, 'orders_log').appendRow(documentRecord(invoiceData, orderReference, invoiceReference, 'IN_PRODUCTION', '', ''));
+        const orderSheet = getDocumentSheet(ss, 'orders_log');
+        orderSheet.appendRow(documentRecord(invoiceData, orderReference, invoiceReference, 'IN_PRODUCTION', '', ''));
+        trackingUrl = getOrderTrackingUrl(ensureOrderTrackingToken(findDocument(ss, 'orders_log', orderReference)));
       }
 
       return ContentService
-        .createTextOutput(JSON.stringify({ status: 'success', documentType: 'invoice', reference: invoiceReference, orderReference, data: withInvoicePaymentTotals(ss, documentResponse(findDocument(ss, 'invoices_log', invoiceReference), 'invoice')) }))
+        .createTextOutput(JSON.stringify({ status: 'success', documentType: 'invoice', reference: invoiceReference, orderReference, trackingUrl, data: withInvoicePaymentTotals(ss, documentResponse(findDocument(ss, 'invoices_log', invoiceReference), 'invoice')) }))
         .setMimeType(ContentService.MimeType.JSON);
     }
 
@@ -984,14 +1105,20 @@ function doPost(e) {
       if (existingOrder) {
         if (String(existingOrder.values[10] || '') === 'COMPLETED') throw new Error('This order is already completed.');
         return ContentService
-          .createTextOutput(JSON.stringify({ status: 'success', alreadyStarted: true, orderReference: existingOrder.values[1] }))
+          .createTextOutput(JSON.stringify({
+            status: 'success',
+            alreadyStarted: true,
+            orderReference: existingOrder.values[1],
+            trackingUrl: getOrderTrackingUrl(ensureOrderTrackingToken(existingOrder))
+          }))
           .setMimeType(ContentService.MimeType.JSON);
       }
       const orderReference = createDocumentReference('ORD');
       getDocumentSheet(ss, 'orders_log').appendRow(documentRecord(invoiceData, orderReference, invoiceData.reference, 'IN_PRODUCTION', '', ''));
+      const trackingUrl = getOrderTrackingUrl(ensureOrderTrackingToken(findDocument(ss, 'orders_log', orderReference)));
       SpreadsheetApp.flush();
       return ContentService
-        .createTextOutput(JSON.stringify({ status: 'success', orderReference, data: documentResponse(findDocument(ss, 'orders_log', orderReference), 'order') }))
+        .createTextOutput(JSON.stringify({ status: 'success', orderReference, trackingUrl, data: documentResponse(findDocument(ss, 'orders_log', orderReference), 'order') }))
         .setMimeType(ContentService.MimeType.JSON);
     }
 
@@ -1180,9 +1307,9 @@ function doPost(e) {
       }
       const documents = [
         ...listDocumentsFromSheet(ss, 'quotes_log', 'quotation'),
+        ...listDocumentsFromSheet(ss, 'orders_log', 'order'),
         ...listDocumentsFromSheet(ss, 'invoices_log', 'invoice'),
         ...listDocumentsFromSheet(ss, 'receipts_log', 'receipt'),
-        ...listDocumentsFromSheet(ss, 'orders_log', 'order'),
         ...listDocumentsFromSheet(ss, 'deliveries_log', 'delivery')
       ].sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
 

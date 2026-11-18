@@ -138,6 +138,11 @@ h1 { font-weight: 700; font-size: clamp(1.8rem, 3vw, 2.45rem); line-height: 1.04
 .documents-table { width: 100%; border-collapse: collapse; font-size: .82rem; white-space: nowrap; }
 .documents-table th { padding: 11px 13px; background: #f7f3ef; color: var(--muted); font-size: .68rem; letter-spacing: .06em; text-transform: uppercase; text-align: left; }
 .documents-table td { padding: 11px 13px; border-top: 1px solid var(--line); vertical-align: middle; }
+.order-tracking-link-cell { display: flex; align-items: center; gap: 6px; min-width: 290px; }
+.order-tracking-link-cell input { width: 235px; min-width: 0; padding: 7px 8px; border: 1px solid var(--line); border-radius: 7px; background: #fff; color: var(--ink); font-size: .7rem; }
+.order-tracking-link-cell input:focus { outline: 2px solid rgba(181, 45, 59, .2); border-color: var(--red); }
+.order-tracking-link-cell button { flex: 0 0 auto; border: 0; border-radius: 7px; padding: 7px 9px; background: var(--red); color: #fff; font-size: .7rem; font-weight: 800; cursor: pointer; }
+.order-tracking-link-empty { color: var(--muted); }
 .documents-empty { text-align: center; color: var(--muted); white-space: normal; }
 .document-type-tag { padding: 3px 8px; border-radius: 999px; font-size: .68rem; font-weight: 800; text-transform: uppercase; background: #f5f0eb; color: var(--ink); }
 .document-status-tag { padding: 3px 8px; border-radius: 999px; font-size: .68rem; font-weight: 800; text-transform: uppercase; }
@@ -348,6 +353,7 @@ h1 { font-weight: 700; font-size: clamp(1.8rem, 3vw, 2.45rem); line-height: 1.04
 .document-payment-summary strong { color: var(--ink); }
 .document-payment-note { position: relative; z-index: 1; margin-top: 16px; padding: 12px 14px; border-radius: 9px; background: #fdf3e4; color: #8a5a12; font-size: .82rem; line-height: 1.5; text-align: center; }
 .document-payment-note.is-success { background: #e9f7ef; color: #1b6d3f; }
+.document-payment-note a { display: block; margin-top: 5px; color: var(--red); font-weight: 700; overflow-wrap: anywhere; }
 .document-watermark-logo { position: absolute; top: 50%; left: 50%; z-index: 0; width: 60%; max-width: 340px; opacity: .07; transform: translate(-50%, -50%); pointer-events: none; }
 .document-status-stamp { position: relative; z-index: 1; display: block; width: fit-content; margin: 26px auto 0; padding: 10px 22px; border: 3px solid var(--green); border-radius: 10px; color: var(--green); font-size: 1.3rem; font-weight: 800; letter-spacing: .15em; text-align: center; transform: rotate(-6deg); white-space: nowrap; }
 .document-status-stamp.pending { border-color: var(--red); color: var(--red); }
@@ -427,6 +433,8 @@ h1 { font-weight: 700; font-size: clamp(1.8rem, 3vw, 2.45rem); line-height: 1.04
   .documents-table .document-type-tag, .documents-table .document-status-tag { justify-self: start; max-width: 100%; }
   .documents-row-actions { min-width: 0; }
   .documents-row-actions button { min-height: 40px; max-width: 100%; white-space: normal; }
+ .order-tracking-link-cell { min-width: 0; max-width: 100%; }
+ .order-tracking-link-cell input { width: 100%; }
 }
 @media (max-width: 520px) {
   .app-shell { padding-left: 12px; padding-right: 12px; padding-bottom: 32px; }

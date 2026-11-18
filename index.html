@@ -271,8 +271,8 @@
         </div>
         <div class="documents-table-wrap">
           <table class="documents-table">
-            <thead><tr><th>Date</th><th>Type</th><th>Reference</th><th>Client</th><th>Total (Kshs)</th><th>Status</th><th>Actions</th></tr></thead>
-            <tbody id="documentsTableBody"><tr><td colspan="7" class="documents-empty">Loading documents...</td></tr></tbody>
+            <thead><tr><th>Date</th><th>Type</th><th>Reference</th><th>Client</th><th>Total (Kshs)</th><th>Status</th><th>Order status link</th><th>Actions</th></tr></thead>
+            <tbody id="documentsTableBody"><tr><td colspan="8" class="documents-empty">Loading documents...</td></tr></tbody>
           </table>
         </div>
       </div>
@@ -490,6 +490,7 @@
         <button class="refresh-btn" type="button" onclick="generatePDF(currentDocument.type, currentDocument.reference)">Download PDF</button>
         <button class="refresh-btn" type="button" onclick="generateJPEG(currentDocument.type, currentDocument.reference)">Download JPEG</button>
         <button class="whatsapp-btn" type="button" onclick="shareDocumentViaWhatsApp()">Share via WhatsApp</button>
+        <button class="custom-btn" type="button" id="copyOrderTrackingLinkButton" onclick="copyOrderTrackingLink()" hidden>Copy order status link</button>
         <button class="custom-btn" type="button" id="convertQuotationButton" onclick="convertCurrentQuotationToInvoice()" hidden>Convert to invoice</button>
         <button class="custom-btn" type="button" id="startInvoiceProductionButton" onclick="startInvoiceProductionFromPreview()" hidden>Start production</button>
         <button class="custom-btn" type="button" id="proceedToPaymentButton" onclick="openPaymentModal()" hidden>Proceed to payment</button>

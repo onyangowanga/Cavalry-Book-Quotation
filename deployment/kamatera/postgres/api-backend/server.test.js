@@ -2,7 +2,12 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { adminReadCacheKey, getBearerToken, validateCatalogue } = require('./server');
+const {
+  adminReadCacheKey,
+  getBearerToken,
+  isValidOrderTrackingToken,
+  validateCatalogue
+} = require('./server');
 
 test('accepts catalogue records from Apps Script', () => {
   const input = [{ id: 2, title: 'Book', unitCost: 500, author: 'Writer' }];
@@ -35,4 +40,11 @@ test('accepts only opaque Apps Script staff session tokens for API authorization
   assert.equal(getBearerToken({ headers: { authorization: 'Bearer SESSION-abc-123' } }), 'SESSION-abc-123');
   assert.equal(getBearerToken({ headers: { authorization: 'Bearer staff-password' } }), '');
   assert.equal(getBearerToken({ headers: {} }), '');
+});
+
+test('accepts only 64-character lowercase hexadecimal order tracking tokens', () => {
+  assert.equal(isValidOrderTrackingToken('a'.repeat(64)), true);
+  assert.equal(isValidOrderTrackingToken('A'.repeat(64)), false);
+  assert.equal(isValidOrderTrackingToken('a'.repeat(63)), false);
+  assert.equal(isValidOrderTrackingToken('a'.repeat(64) + 'b'), false);
 });

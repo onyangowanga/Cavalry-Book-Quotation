@@ -1847,6 +1847,7 @@ async function generateInvoiceFromModal() {
     currentDocument = result.data;
     currentDocument.type = 'invoice';
     currentDocument.reference = result.reference;
+    currentDocument.trackingUrl = result.trackingUrl || currentDocument.trackingUrl;
     // The quotation this invoice came from is now converted; force a fresh one for any future order.
     currentQuotationReference = '';
     quotationSignature = '';
@@ -1931,6 +1932,7 @@ async function submitInvoicePaymentFromModal() {
     currentDocument = result.data;
     currentDocument.type = 'receipt';
     currentDocument.reference = result.reference;
+    currentDocument.trackingUrl = result.trackingUrl || '';
     closePaymentModal();
   } catch (error) {
     console.error('Invoice payment failed:', error);
@@ -1955,6 +1957,12 @@ function renderDocumentHtml(documentData) {
   const requiresProduction = Boolean(documentData.requiresProduction) || items.some(isProductionBookItem);
   const financialSummary = type === 'invoice'
     ? `<div class="document-payment-summary"><span>Invoice total <strong>${formatKshs(documentData.total)}</strong></span><span>Payments received <strong>${formatKshs(documentData.amountPaid || 0)}</strong></span><span>Balance due <strong>${formatKshs(documentData.balance ?? documentData.total)}</strong></span></div>`
+    : '';
+  const trackingUrl = /^https:\/\/api\.cavalrypublishers\.co\.ke\/admin\/order-status\.html#[a-f0-9]{64}$/.test(String(documentData.trackingUrl || ''))
+    ? documentData.trackingUrl
+    : '';
+  const trackingNote = trackingUrl
+    ? `<div class="document-payment-note">Click this link to track your order: <a href="${escapeHtml(trackingUrl)}">${escapeHtml(trackingUrl)}</a></div>`
     : '';
   let noteHtml = '';
   if (type === 'invoice' && status !== 'PAID') {
@@ -1983,6 +1991,7 @@ function renderDocumentHtml(documentData) {
     <div class="document-render-total"><span>Total Kshs.</span><strong>${Number(documentData.total || 0).toLocaleString('en-US', { minimumFractionDigits: 2 })}</strong></div>
     ${financialSummary}
     ${noteHtml}
+    ${trackingNote}
     <div class="document-status-stamp ${status === 'PAID' ? '' : 'pending'}">${escapeHtml(status)}</div>`;
 }
 
@@ -1997,10 +2006,38 @@ function openDocumentPreview() {
   document.getElementById('startInvoiceProductionButton').hidden = !canStartProduction;
   document.getElementById('proceedToPaymentButton').hidden = !isPendingInvoice;
   document.getElementById('confirmDocumentPaymentButton').hidden = !(isStaff && isPendingInvoice);
+  document.getElementById('copyOrderTrackingLinkButton').hidden = !currentDocument.trackingUrl;
   document.getElementById('documentPreviewModal').style.display = 'flex';
 }
 
 function closeDocumentPreview() { document.getElementById('documentPreviewModal').style.display = 'none'; }
+
+async function copyOrderTrackingLink(reference = '') {
+  const currentMatches = currentDocument && (!reference || currentDocument.reference === reference);
+  const doc = currentMatches && currentDocument.trackingUrl
+    ? currentDocument
+    : allDocuments.find(entry => entry.reference === reference) || (currentMatches ? currentDocument : null);
+  const trackingUrl = doc && String(doc.trackingUrl || '');
+  if (!trackingUrl) {
+    alert('The order status link is not available yet. Refresh the documents and try again.');
+    return;
+  }
+  try {
+    await navigator.clipboard.writeText(trackingUrl);
+    const copyButton = [...document.querySelectorAll('.order-tracking-link-cell button')]
+      .find(button => button.dataset.reference === reference);
+    if (copyButton) {
+      const originalLabel = copyButton.textContent;
+      copyButton.textContent = 'Copied';
+      window.setTimeout(() => { copyButton.textContent = originalLabel; }, 1800);
+    } else {
+      alert('Order status link copied to the clipboard.');
+    }
+  } catch (error) {
+    console.warn('Order status link could not be copied automatically:', error);
+    prompt('Copy this private order status link and send it to the client:', trackingUrl);
+  }
+}
 
 async function confirmCurrentInvoicePayment() {
   if (!currentDocument || currentDocument.type !== 'invoice' || !isStaff) return;
@@ -2049,7 +2086,7 @@ async function loadDocumentsTracker(forceRefresh = false) {
   }
 
   const hasCachedData = allDocuments.length > 0;
-  if (!hasCachedData) tableBody.innerHTML = '<tr><td colspan="7" class="documents-empty">Loading documents...</td></tr>';
+  if (!hasCachedData) tableBody.innerHTML = '<tr><td colspan="8" class="documents-empty">Loading documents...</td></tr>';
   if (syncStatus) syncStatus.textContent = hasCachedData ? 'Updating…' : 'Connecting…';
 
   documentsRequest = (async () => {
@@ -2072,7 +2109,7 @@ async function loadDocumentsTracker(forceRefresh = false) {
       renderDocumentsTable();
       if (syncStatus) syncStatus.textContent = 'Offline · showing cached data';
     } else {
-      tableBody.innerHTML = '<tr><td colspan="7" class="documents-empty">Documents are unavailable offline. Connect and refresh to load them.</td></tr>';
+      tableBody.innerHTML = '<tr><td colspan="8" class="documents-empty">Documents are unavailable offline. Connect and refresh to load them.</td></tr>';
       if (syncStatus) syncStatus.textContent = 'Offline';
     }
   }
@@ -2440,7 +2477,7 @@ function renderDocumentsTable() {
   });
 
   if (!filtered.length) {
-    tableBody.innerHTML = '<tr><td colspan="7" class="documents-empty">No documents match this view.</td></tr>';
+    tableBody.innerHTML = '<tr><td colspan="8" class="documents-empty">No documents match this view.</td></tr>';
     return;
   }
 
@@ -2458,6 +2495,9 @@ function renderDocumentsTable() {
         actions.push(`<button type="button" onclick="startInvoiceProductionFromList('${escapeHtml(doc.reference)}')">Start production</button>`);
       }
     }
+    const trackingLink = doc.trackingUrl
+      ? `<div class="order-tracking-link-cell"><input type="text" aria-label="Order status link for ${escapeHtml(doc.reference)}" value="${escapeHtml(doc.trackingUrl)}" readonly onclick="this.select()"><button type="button" data-reference="${escapeHtml(doc.reference)}" onclick="copyOrderTrackingLink('${escapeHtml(doc.reference)}')">Copy</button></div>`
+      : '<span class="order-tracking-link-empty">—</span>';
     return `<tr>
       <td data-label="Date">${doc.timestamp ? new Date(doc.timestamp).toLocaleDateString('en-GB') : ''}</td>
       <td data-label="Type"><span class="document-type-tag">${escapeHtml(doc.type)}</span></td>
@@ -2465,6 +2505,7 @@ function renderDocumentsTable() {
       <td data-label="Client">${escapeHtml(doc.clientName || 'Valued Client')}</td>
       <td data-label="Total (Kshs)">${formatKshs(doc.total)}</td>
       <td data-label="Status"><span class="document-status-tag ${documentStatusClass(doc.status)}">${escapeHtml(doc.status || '')}</span></td>
+      <td data-label="Order status link">${trackingLink}</td>
       <td data-label="Actions"><div class="documents-row-actions">${actions.join('')}</div></td>
     </tr>`;
   }).join('');
@@ -2491,6 +2532,7 @@ async function convertQuoteToInvoiceFromList(quotationReference) {
     currentDocument = result.data;
     currentDocument.type = 'invoice';
     currentDocument.reference = result.reference;
+    currentDocument.trackingUrl = result.trackingUrl || currentDocument.trackingUrl;
     await loadDocumentsTracker();
     openDocumentPreview();
   } catch (error) {
@@ -2506,7 +2548,13 @@ async function startInvoiceProductionFromList(invoiceReference) {
     const result = await postApi({ action: 'start_invoice_production', invoiceReference, staffPassword });
     if (result.status !== 'success') throw new Error(result.message || 'Production could not be started.');
     await loadDocumentsTracker();
-    alert(result.alreadyStarted ? `Production is already running as ${result.orderReference}.` : `Production started as ${result.orderReference}. The invoice remains unpaid.`);
+    const updatedInvoice = allDocuments.find(doc => doc.type === 'invoice' && doc.reference === invoiceReference);
+    if (updatedInvoice) {
+      updatedInvoice.trackingUrl = result.trackingUrl || updatedInvoice.trackingUrl;
+      currentDocument = updatedInvoice;
+      openDocumentPreview();
+    }
+    alert(`${result.alreadyStarted ? 'Production is already running' : 'Production started'} as ${result.orderReference}. ${result.trackingUrl ? 'The invoice now includes the order tracking link. Choose “Share via WhatsApp” to send it to the client.' : 'The invoice remains unpaid.'}`);
   } catch (error) {
     console.error('Starting invoice production failed:', error);
     alert(error.message || 'Production could not be started. Please refresh and try again.');
@@ -2536,8 +2584,12 @@ async function confirmInvoicePaymentFromList(invoiceReference) {
   try {
     const result = await postApi({ action: 'confirm_invoice_payment', invoiceReference, paymentAmount, paymentRequestId: crypto.randomUUID ? crypto.randomUUID() : `PAY-${Date.now()}-${Math.random().toString(36).slice(2)}`, paymentMethod, paymentReference });
     if (result.status !== 'success') throw new Error(result.message || 'Payment confirmation failed.');
-    // Confirming payment auto-creates a production Order server-side; refresh the whole tracker to show it.
     await loadDocumentsTracker();
+    currentDocument = result.data;
+    currentDocument.type = 'receipt';
+    currentDocument.reference = result.reference;
+    currentDocument.trackingUrl = result.trackingUrl || '';
+    openDocumentPreview();
   } catch (error) {
     console.error('Invoice payment confirmation failed:', error);
     alert(error.message || 'The payment could not be confirmed. Please try again.');
@@ -2581,6 +2633,9 @@ async function shareDocumentViaWhatsApp() {
   const status = String(currentDocument.status || 'PENDING').toUpperCase();
   const isCompletedOrder = type === 'delivery' || (type === 'order' && status === 'COMPLETED');
   const requiresProduction = Boolean(currentDocument.requiresProduction) || (currentDocument.items || []).some(isProductionBookItem);
+  const trackingNote = currentDocument.trackingUrl && ['invoice', 'receipt'].includes(type)
+    ? `\n\nClick this link to track your order: ${currentDocument.trackingUrl}`
+    : '';
   const items = (currentDocument.items || []).map((item, index) => `${index + 1}. ${item.quantity} x ${item.title} - Kshs. ${Number(item.total || 0).toFixed(2)}`).join('\n');
   let note = '';
   if (type === 'invoice' && status !== 'PAID') {
@@ -2595,6 +2650,7 @@ async function shareDocumentViaWhatsApp() {
         ? `\n\n${paymentSummary}\nYour order has been placed and production begins. Delivery within 2 working days.`
         : `\n\n${paymentSummary} Thank you for your business.`;
   }
+  note += trackingNote;
   const message = isCompletedOrder
     ? 'Your order is complete and ready for collection, It was a pleasure doing business with you..'
     : `*CAVALRY PUBLISHERS ${type.toUpperCase()}*\nReference: ${currentDocument.reference}\nStatus: ${status}\nClient: ${currentDocument.clientName || 'Valued Client'}\n\n${items}\n\n*TOTAL: Kshs. ${Number(currentDocument.total || 0).toLocaleString('en-US', { minimumFractionDigits: 2 })}*${note}`;
