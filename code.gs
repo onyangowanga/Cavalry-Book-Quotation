@@ -221,6 +221,18 @@ function parseOrderDate(value) {
   return date;
 }
 
+function getProductionStatus(productionItems, orderStatus) {
+  if (String(orderStatus || '').toUpperCase() === 'COMPLETED'
+    || (productionItems.length && productionItems.every(item => item.completed))) {
+    return 'Ready for collection';
+  }
+  const activeStatuses = [...new Set(productionItems
+    .filter(item => !item.completed)
+    .map(item => item.status)
+    .filter(status => status && status !== 'In production'))];
+  return activeStatuses.length ? activeStatuses.join(' · ') : 'In production';
+}
+
 function ensureOrderExpectedDeliveryDate(orderRecord) {
   if (!orderRecord || !orderRecord.sheet || !orderRecord.rowNumber) throw new Error('Order record is required.');
   const existingDate = formatOrderDate(orderRecord.values[14]);
@@ -312,6 +324,7 @@ function getPublicOrderStatus(ss, trackingToken) {
       completed: item.printed === true
     };
   });
+  const productionStatus = getProductionStatus(productionItems, order.status);
   const paymentTotal = invoice ? invoice.total : order.total;
   const amountPaid = invoice ? invoice.amountPaid : 0;
   const balance = invoice ? invoice.balance : paymentTotal;
@@ -321,6 +334,7 @@ function getPublicOrderStatus(ss, trackingToken) {
       orderReference: order.reference,
       createdAt: order.timestamp instanceof Date ? order.timestamp.toISOString() : String(order.timestamp || ''),
       orderStatus: String(order.status || 'IN_PRODUCTION'),
+      productionStatus,
       expectedDeliveryDate,
       paymentStatus: invoice ? invoice.status : 'UNKNOWN',
       total: Number(paymentTotal || 0),
@@ -1640,9 +1654,12 @@ function doPost(e) {
     const booksData = booksSheet.getDataRange().getValues();
     const title = String(postData.title || '').trim();
     const author = String(postData.author || '').trim();
-    const pages = parseInt(postData.pages, 10) || 0;
+    const pages = Number(postData.pages);
     const colorPages = parseInt(postData.colorPages, 10) || 0;
     const sizeCode = String(postData.sizeCode || '1').trim();
+    if (!title || !Number.isInteger(pages) || pages < 1 || colorPages < 0 || colorPages > pages) {
+      throw new Error('Enter a title, a valid page count, and colour pages no greater than total pages.');
+    }
 
     // Check existing titles
     for (let i = 1; i < booksData.length; i++) {
@@ -1653,39 +1670,10 @@ function doPost(e) {
       }
     }
 
-    const pdfBase64 = String(postData.pdfBase64 || '');
-    if (!pdfBase64) {
-      return ContentService
-        .createTextOutput(JSON.stringify({ status: 'error', message: 'A PDF copy is required when saving a custom book to the catalogue.' }))
-        .setMimeType(ContentService.MimeType.JSON);
-    }
-    if (pdfBase64.length > 28 * 1024 * 1024) {
-      return ContentService
-        .createTextOutput(JSON.stringify({ status: 'error', message: 'The PDF is too large to email. Maximum size is 20 MB.' }))
-        .setMimeType(ContentService.MimeType.JSON);
-    }
-
     const params = getParametersFromSheet(ss);
     const unitCost = computeUnitCost(pages, colorPages, sizeCode, params);
     booksSheet.appendRow([title, author, pages, colorPages, sizeCode, unitCost, '']);
     clearCatalogueCache();
-
-    let emailSent = false;
-    let emailError = '';
-    try {
-      const fileName = String(postData.pdfFileName || `${title}.pdf`).replace(/[\\/:*?"<>|]/g, '_');
-      const attachment = Utilities.newBlob(Utilities.base64Decode(pdfBase64), 'application/pdf', fileName);
-      MailApp.sendEmail({
-        to: 'cavalrypublishers@gmail.com',
-        subject: `New catalogue book: ${title}`,
-        body: `A new book was added to the Cavalry Publishers catalogue.\n\nTitle: ${title}\nAuthor: ${author || 'Not provided'}\nPages: ${pages}\nSize code: ${sizeCode}\nCalculated price: Kshs. ${unitCost}\n\nThe uploaded PDF is attached.`,
-        attachments: [attachment]
-      });
-      emailSent = true;
-    } catch (error) {
-      emailError = error.message || String(error);
-      console.error('Catalogue PDF email failed:', emailError);
-    }
 
     const codeKey = sizeCode.charAt(0);
     const sizeLabel = (params.rules[codeKey] && params.rules[codeKey].label) 
@@ -1705,9 +1693,7 @@ function doPost(e) {
           sizeLabel: sizeLabel,
           coverUrl: '',
           unitCost: unitCost
-        },
-        emailSent: emailSent,
-        emailError: emailError
+        }
       }))
       .setMimeType(ContentService.MimeType.JSON);
 

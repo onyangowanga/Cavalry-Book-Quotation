@@ -3367,7 +3367,7 @@ async function submitCustomBook() {
     document.getElementById('customSaveToCatalogue').checked = false;
     document.getElementById('customAddToQuote').checked = false;
     document.getElementById('customQuoteResult').hidden = false;
-    status.textContent = 'Choose whether to save this book for future use, add it only to this quote, or both.';
+    status.textContent = 'Choose whether to add this book to the catalogue, the current quote, or both.';
   } catch (error) {
     console.error('Custom book price calculation failed:', error);
     status.textContent = error.message || 'Could not calculate this book. Please try again.';
@@ -3375,17 +3375,6 @@ async function submitCustomBook() {
     button.disabled = false;
     button.textContent = 'Calculate price';
   }
-}
-
-async function fileToBase64(file) {
-  const buffer = await file.arrayBuffer();
-  const bytes = new Uint8Array(buffer);
-  let binary = '';
-  const chunkSize = 0x8000;
-  for (let index = 0; index < bytes.length; index += chunkSize) {
-    binary += String.fromCharCode(...bytes.subarray(index, index + chunkSize));
-  }
-  return btoa(binary);
 }
 
 async function applyCustomBookChoices() {
@@ -3407,27 +3396,13 @@ async function applyCustomBookChoices() {
   status.textContent = 'Applying your choices...';
 
   if (saveToCatalogue) {
-    const file = document.getElementById('pdfUpload').files[0];
-    if (!file || file.type !== 'application/pdf') {
-      status.textContent = 'Select a PDF before saving this book to the catalogue. You can still add it to the quote by unchecking the save option.';
-      button.disabled = false;
-      return;
-    }
-    if (file.size > 20 * 1024 * 1024) {
-      status.textContent = 'The PDF must be 20 MB or smaller to email. You can still add this title to the quote without saving it.';
-      button.disabled = false;
-      return;
-    }
-
     try {
       const result = await postApi({
         title: draft.title,
         author: draft.author,
         pages: draft.pages,
         colorPages: draft.colorPages,
-        sizeCode: draft.sizeCode,
-        pdfFileName: file.name,
-        pdfBase64: await fileToBase64(file)
+        sizeCode: draft.sizeCode
       });
       if (result.status === 'success') {
         const existingIndex = catalog.findIndex(book => String(book.title).toLowerCase() === draft.title.toLowerCase());
@@ -3436,10 +3411,10 @@ async function applyCustomBookChoices() {
         rawCatalog = catalog;
         displayBooks(catalog);
         bookForQuote = result.book;
-        messages.push(result.emailSent ? 'Saved to catalogue and PDF emailed to cavalrypublishers@gmail.com.' : `Saved to catalogue, but email failed: ${result.emailError || 'Email could not be sent.'}`);
+        messages.push('Added to the catalogue.');
       } else if (result.status === 'exists') {
         bookForQuote = catalog.find(book => String(book.title).toLowerCase() === draft.title.toLowerCase()) || draft;
-        messages.push('That title is already in the catalogue; no duplicate was added or emailed.');
+        messages.push('That title is already in the catalogue.');
       } else {
         throw new Error(result.message || 'Could not save this book to the catalogue.');
       }

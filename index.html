@@ -509,13 +509,13 @@
   </div>
 
   <div id="customModal" class="modal-overlay" role="dialog" aria-modal="true" aria-labelledby="customModalTitle">
-    <div class="modal-card">
+    <div class="modal-card custom-modal-card">
       <div class="modal-header">
         <h3 id="customModalTitle">Add Custom Book</h3>
         <button aria-label="Close custom book dialog" onclick="closeCustomModal()" style="border:0; background:none; font-size:1.4rem; cursor:pointer;">&times;</button>
       </div>
       <div class="modal-body">
-        <label><span class="field-label">Book PDF (required to save to catalogue; pages auto-detected)</span>
+        <label><span class="field-label">Book PDF (optional; detects page count automatically)</span>
           <input type="file" id="pdfUpload" accept="application/pdf" onchange="handlePdfUpload(this)">
         </label>
         <label><span class="field-label">Book Title *</span><input type="text" id="customTitle" required></label>
@@ -534,7 +534,7 @@
         <button id="customCalculateButton" class="custom-btn" type="button" style="margin-top:10px; width:100%;" onclick="submitCustomBook()">Calculate price</button>
         <section id="customQuoteResult" class="custom-quote-result" hidden aria-live="polite">
           <div class="custom-quote-price"><span>Calculated unit price</span><strong id="customQuoteUnitPrice"></strong></div>
-          <label class="custom-choice"><input id="customSaveToCatalogue" type="checkbox"><span>Save to the book catalogue and email the PDF to cavalrypublishers@gmail.com</span></label>
+          <label class="custom-choice"><input id="customSaveToCatalogue" type="checkbox"><span>Add this book to the catalogue</span></label>
           <label class="custom-choice"><input id="customAddToQuote" type="checkbox"><span>Add this book to the current quote</span></label>
           <p id="customQuoteStatus" class="custom-quote-status" role="status" aria-live="polite"></p>
           <button id="customApplyChoicesButton" class="custom-btn" type="button" onclick="applyCustomBookChoices()">Apply choices</button>

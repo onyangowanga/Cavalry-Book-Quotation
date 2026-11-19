@@ -148,7 +148,8 @@
         payment.textContent = paymentLabel(order.paymentStatus);
         payment.className = order.paymentStatus === 'PAID' ? 'status-paid' : 'status-pending';
         const production = document.getElementById('productionStatus');
-        production.textContent = order.orderStatus === 'COMPLETED' ? 'Ready for collection' : 'In production';
+        production.textContent = order.productionStatus
+          || (order.orderStatus === 'COMPLETED' ? 'Ready for collection' : 'In production');
         production.className = order.orderStatus === 'COMPLETED' ? 'status-paid' : '';
         const deliveryMatch = String(order.expectedDeliveryDate || '').match(/^(\d{4})-(\d{2})-(\d{2})$/);
         document.getElementById('expectedDeliveryDate').textContent = deliveryMatch
