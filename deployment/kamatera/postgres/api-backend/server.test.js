@@ -4,6 +4,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const {
   adminReadCacheKey,
+  buildPaymentLinkUrl,
   buildMpesaStkPayload,
   getCallbackMetadata,
   getBearerToken,
@@ -91,6 +92,8 @@ test('builds a Buy Goods STK request with the configured invoice amount and call
 test('validates payment tokens and extracts callback metadata', () => {
   assert.equal(isValidPaymentLinkToken('b'.repeat(64)), true);
   assert.equal(isValidPaymentLinkToken('b'.repeat(63)), false);
+  assert.equal(buildPaymentLinkUrl('https://api.example.test', 'b'.repeat(64)),
+    `https://api.example.test/admin/payment.html#${'b'.repeat(64)}`);
   assert.deepEqual(getCallbackMetadata({
     CallbackMetadata: { Item: [
       { Name: 'Amount', Value: 500 },

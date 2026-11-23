@@ -464,6 +464,10 @@ async function getPaymentLink(token) {
   return rows[0];
 }
 
+function buildPaymentLinkUrl(baseUrl, token) {
+  return `${baseUrl}/admin/payment.html#${token}`;
+}
+
 async function createPaymentLink(invoiceReference, session) {
   getMpesaConfig();
   const reference = String(invoiceReference || '').trim();
@@ -481,7 +485,7 @@ async function createPaymentLink(invoiceReference, session) {
     [tokenHash, reference, session.username]
   );
   return {
-    url: `${MPESA_PUBLIC_BASE_URL}/admin/pay.html#${token}`,
+    url: buildPaymentLinkUrl(MPESA_PUBLIC_BASE_URL, token),
     invoiceReference: reference,
     balance: invoice.balance
   };
@@ -1143,6 +1147,7 @@ if (require.main === module) {
 
 module.exports = {
   adminReadCacheKey,
+  buildPaymentLinkUrl,
   buildMpesaStkPayload,
   getCallbackMetadata,
   getBearerToken,

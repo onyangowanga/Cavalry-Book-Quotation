@@ -2953,8 +2953,14 @@ async function shareDocumentViaWhatsApp() {
   const isCompletedOrder = type === 'delivery' || (type === 'order' && status === 'COMPLETED');
   const requiresProduction = Boolean(currentDocument.requiresProduction) || (currentDocument.items || []).some(isProductionBookItem);
   const expectedDelivery = formatOrderDeliveryDate(currentDocument.expectedDeliveryDate);
+  const invoiceTotal = Number(currentDocument.total || 0);
+  const amountPaid = Number(currentDocument.amountPaid || 0);
+  const invoiceBalance = Number(currentDocument.balance ?? (
+    status === 'PAID' ? 0 : Math.max(0, invoiceTotal - amountPaid)
+  ));
+  const hasInvoiceBalance = type === 'invoice' && Number.isFinite(invoiceBalance) && invoiceBalance > 0;
   let paymentLink = '';
-  if (type === 'invoice' && ['PENDING', 'PARTIALLY_PAID'].includes(status)) {
+  if (hasInvoiceBalance) {
     try {
       const link = await createInvoicePaymentLink(currentDocument.reference);
       paymentLink = link.url;
@@ -2969,12 +2975,12 @@ async function shareDocumentViaWhatsApp() {
     : '';
   const items = (currentDocument.items || []).map((item, index) => `${index + 1}. ${item.quantity} x ${item.title} - Kshs. ${Number(item.total || 0).toFixed(2)}`).join('\n');
   let note = '';
-  if (type === 'invoice' && status !== 'PAID') {
-    note = `\n\nInvoice total: ${formatKshs(currentDocument.total)}\nPaid to date: ${formatKshs(currentDocument.amountPaid || 0)}\n*Balance due: ${formatKshs(currentDocument.balance ?? currentDocument.total)}*\nClick this link to pay the remaining balance: ${paymentLink}${requiresProduction ? '\nProduction begins after receipt of payment.' : ''}`;
+  if (hasInvoiceBalance) {
+    note = `\n\nInvoice total: ${formatKshs(invoiceTotal)}\nPaid to date: ${formatKshs(amountPaid)}\n*Balance due: ${formatKshs(invoiceBalance)}*\nClick this link to pay the remaining balance: ${paymentLink}${requiresProduction ? '\nProduction begins after receipt of payment.' : ''}`;
   } else if (type === 'receipt') {
-    const amountPaid = Number(currentDocument.paymentAmount ?? currentDocument.total ?? 0);
+    const receiptAmountPaid = Number(currentDocument.paymentAmount ?? currentDocument.total ?? 0);
     const balance = Number(currentDocument.balance || 0);
-    const paymentSummary = `Payment received: ${formatKshs(amountPaid)}. Cumulative paid: ${formatKshs(currentDocument.cumulativePaid || amountPaid)}. Balance: ${formatKshs(balance)}.`;
+    const paymentSummary = `Payment received: ${formatKshs(receiptAmountPaid)}. Cumulative paid: ${formatKshs(currentDocument.cumulativePaid || receiptAmountPaid)}. Balance: ${formatKshs(balance)}.`;
     note = currentDocument.orderCompleted
       ? `\n\n${paymentSummary} It was a pleasure doing business with you.`
       : requiresProduction
