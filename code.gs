@@ -30,6 +30,17 @@ function verifyStaffCredentials(ss, username, password) {
   return getStaffCredentials(ss).some(entry => entry.username.toLowerCase() === suppliedUsername && entry.password === suppliedPassword);
 }
 
+function secureStringEquals(expected, supplied) {
+  const left = String(expected || '');
+  const right = String(supplied || '');
+  if (!left || left.length !== right.length) return false;
+  let difference = 0;
+  for (let index = 0; index < left.length; index++) {
+    difference |= left.charCodeAt(index) ^ right.charCodeAt(index);
+  }
+  return difference === 0;
+}
+
 // Keeps a running directory of clients so staff aren't re-typing the same name/phone every time.
 function getCustomersSheet(ss) {
   let sheet = ss.getSheetByName('customers');
@@ -351,6 +362,25 @@ function documentRecord(postData, reference, parentReference, status, paymentMet
     JSON.stringify(postData.items || []), Number(postData.subtotal || 0), Number(postData.discount || 0),
     Number(postData.total || 0), postData.taxBreakdown || '', status, paymentMethod || '', paymentReference || ''
   ];
+}
+
+function addInvoiceRoundingAdjustment(items, rawTotal) {
+  const total = Math.round(rawTotal);
+  const adjustment = Number((total - rawTotal).toFixed(2));
+  const adjustedItems = items.filter(item => item.isRoundingAdjustment !== true);
+  if (adjustment !== 0) {
+    adjustedItems.push({
+      title: 'Rounding adjustment',
+      quantity: 1,
+      unitPrice: adjustment,
+      total: adjustment,
+      mode: '',
+      size: '',
+      isCharge: true,
+      isRoundingAdjustment: true
+    });
+  }
+  return { items: adjustedItems, total, adjustment };
 }
 
 function getPaymentSmsSheet(ss) {
@@ -1073,7 +1103,7 @@ function doPost(e) {
       }
 
       if (!Array.isArray(postData.items) || !postData.items.length) throw new Error('Add at least one line item.');
-      const items = postData.items.map(item => {
+      const items = postData.items.filter(item => item && item.isRoundingAdjustment !== true).map(item => {
         const title = String(item.title || '').trim();
         const quantity = Number(item.quantity);
         const unitPrice = Number(item.unitPrice);
@@ -1085,7 +1115,15 @@ function doPost(e) {
       const subtotal = items.reduce((sum, item) => sum + item.total, 0);
       const discount = Math.max(0, Number(postData.discount || 0));
       if (!Number.isFinite(discount) || discount > subtotal) throw new Error('Discount cannot exceed the item subtotal.');
-      const total = subtotal - discount;
+      let total = subtotal - discount;
+      let savedSubtotal = subtotal;
+      let savedItems = items;
+      if (type === 'invoice') {
+        const rounded = addInvoiceRoundingAdjustment(items, total);
+        total = rounded.total;
+        savedSubtotal += rounded.adjustment;
+        savedItems = rounded.items;
+      }
       if (existingInvoice && total <= existingInvoice.amountPaid) {
         throw new Error('The revised invoice total must remain greater than the amount already paid.');
       }
@@ -1095,17 +1133,17 @@ function doPost(e) {
 
       if (isQuotation && record.isLegacyQuote) {
         record.sheet.getRange(record.rowNumber, 1, 1, 13).setValues([documentRecord({
-          clientName, clientPhone, items, subtotal, discount, total, taxBreakdown: existing.taxBreakdown
+          clientName, clientPhone, items: savedItems, subtotal: savedSubtotal, discount, total, taxBreakdown: existing.taxBreakdown
         }, existing.reference, '', 'ACTIVE', '', '')]);
       } else {
         record.sheet.getRange(record.rowNumber, 4, 1, 6).setValues([
-          [clientName, clientPhone, JSON.stringify(items), subtotal, discount, total]
+          [clientName, clientPhone, JSON.stringify(savedItems), savedSubtotal, discount, total]
         ]);
         record.sheet.getRange(record.rowNumber, 11).setValue(existingInvoice.amountPaid > 0 ? 'PARTIALLY_PAID' : 'PENDING');
         if (productionOrder) {
-          const updatedProductionItems = items.map(item => ({ ...item, printed: false, productionStageIndex: 0 }));
+          const updatedProductionItems = savedItems.map(item => ({ ...item, printed: false, productionStageIndex: 0 }));
           productionOrder.sheet.getRange(productionOrder.rowNumber, 4, 1, 6).setValues([
-            [clientName, clientPhone, JSON.stringify(updatedProductionItems), subtotal, discount, total]
+            [clientName, clientPhone, JSON.stringify(updatedProductionItems), savedSubtotal, discount, total]
           ]);
         }
       }
@@ -1266,15 +1304,18 @@ function doPost(e) {
         .map(charge => ({ title: charge.label || 'Additional charge', quantity: 1, unitPrice: Number(charge.amount), total: Number(charge.amount), mode: '', size: '', isCharge: true }));
       const items = [...(quoteData.items || []), ...extraItems];
       const extraTotal = extraItems.reduce((sum, item) => sum + item.total, 0);
-      const subtotal = Number(quoteData.subtotal || 0) + extraTotal;
-      const total = Number(quoteData.total || 0) + extraTotal;
+      const rawSubtotal = Number(quoteData.subtotal || 0) + extraTotal;
+      const rawTotal = Number(quoteData.total || 0) + extraTotal;
+      const rounded = addInvoiceRoundingAdjustment(items, rawTotal);
+      const subtotal = rawSubtotal + rounded.adjustment;
+      const total = rounded.total;
 
       const invoiceReference = createDocumentReference('INV');
       const invoiceSheet = getDocumentSheet(ss, 'invoices_log');
       invoiceSheet.appendRow(documentRecord({
         clientName: postData.clientName || quoteData.clientName,
         clientPhone: postData.clientPhone || quoteData.clientPhone,
-        items, subtotal, discount: quoteData.discount || 0, total
+        items: rounded.items, subtotal, discount: quoteData.discount || 0, total
       }, invoiceReference, quoteData.reference, 'PENDING', '', ''));
 
       // Mark the quotation as converted so it cannot be turned into a second invoice.
@@ -1354,8 +1395,40 @@ function doPost(e) {
         .setMimeType(ContentService.MimeType.JSON);
     }
 
-    // Every confirmed payment creates its own receipt and updates the invoice balance.
+    if (postData.action === 'record_verified_mpesa_payment') {
+      const expectedSecret = PropertiesService.getScriptProperties().getProperty('MPESA_PAYMENT_API_SECRET');
+      if (!expectedSecret || !secureStringEquals(expectedSecret, postData.serverSecret)) {
+        return ContentService
+          .createTextOutput(JSON.stringify({ status: 'error', message: 'Payment service authorization failed.' }))
+          .setMimeType(ContentService.MimeType.JSON);
+      }
+      const paymentAmount = Number(postData.paymentAmount);
+      const paymentRequestId = String(postData.paymentRequestId || '').trim();
+      const paymentReference = String(postData.paymentReference || '').trim().toUpperCase();
+      if (!Number.isInteger(paymentAmount) || paymentAmount <= 0 ||
+          !paymentRequestId || !/^[A-Z0-9]{8,12}$/.test(paymentReference)) {
+        throw new Error('Verified M-Pesa payment details are invalid.');
+      }
+      const payment = recordInvoicePayment(ss, {
+        invoiceReference: postData.invoiceReference,
+        paymentAmount,
+        paymentRequestId,
+        paymentMethod: 'mpesa',
+        paymentReference
+      });
+      return ContentService
+        .createTextOutput(JSON.stringify(payment))
+        .setMimeType(ContentService.MimeType.JSON);
+    }
+
+    // Staff-entered receipts are restricted to authenticated staff; customer payments use the
+    // separately verified M-Pesa callback route above.
     if (postData.action === 'confirm_invoice_payment') {
+      if (!isValidStaffPassword(ss, postData.staffPassword)) {
+        return ContentService
+          .createTextOutput(JSON.stringify({ status: 'error', message: 'Staff authorization required.' }))
+          .setMimeType(ContentService.MimeType.JSON);
+      }
       const payment = recordInvoicePayment(ss, postData);
       return ContentService
         .createTextOutput(JSON.stringify(payment))
@@ -1533,7 +1606,7 @@ function doPost(e) {
       }
       const schedule = history.filter(entry => entry.event === 'SCHEDULE' && entry.invoiceReference === invoice.reference).pop() || {};
       const money = amount => 'Kshs. ' + Number(amount || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-      const message = `Hello ${invoice.clientName}, a friendly reminder that invoice ${invoice.reference} has an outstanding balance of ${money(invoice.balance)}.\nInvoice total: ${money(invoice.total)}\nPayments received: ${money(invoice.amountPaid)}${schedule.dueDate ? '\nPayment due: ' + schedule.dueDate : ''}${schedule.promisedDate ? '\nAgreed payment date: ' + schedule.promisedDate : ''}\nKindly pay the balance to Till No. 5675635, quoting your invoice reference. If you have already paid, please share the transaction reference for reconciliation. Thank you for your business.`;
+      const message = `Hello ${invoice.clientName}, a friendly reminder that invoice ${invoice.reference} has an outstanding balance of ${money(invoice.balance)}.\nInvoice total: ${money(invoice.total)}\nPayments received: ${money(invoice.amountPaid)}${schedule.dueDate ? '\nPayment due: ' + schedule.dueDate : ''}${schedule.promisedDate ? '\nAgreed payment date: ' + schedule.promisedDate : ''}\nKindly pay the balance to Till No. 7637201, quoting your invoice reference. If you have already paid, please share the transaction reference for reconciliation. Thank you for your business.`;
       const requestId = Utilities.getUuid();
       CacheService.getScriptCache().put('reminder-' + requestId, JSON.stringify({ invoiceReference: invoice.reference, message, requestId, authValue }), 1800);
       return ContentService.createTextOutput(JSON.stringify({ status: 'success', data: invoice, message, requestId })).setMimeType(ContentService.MimeType.JSON);

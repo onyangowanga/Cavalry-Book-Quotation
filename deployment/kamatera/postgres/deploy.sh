@@ -31,6 +31,8 @@ chmod 600 .env
 docker compose --project-name cavalry-bookshop --project-directory "$DEPLOY_DIR" \
   --file compose.yaml config --quiet
 docker compose --project-name cavalry-bookshop --project-directory "$DEPLOY_DIR" \
+  --file compose.yaml build cavalry-books-api
+docker compose --project-name cavalry-bookshop --project-directory "$DEPLOY_DIR" \
   --file compose.yaml up -d --wait --wait-timeout 120
 
 docker exec cavalry-books-db sh -c \

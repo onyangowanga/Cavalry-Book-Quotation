@@ -4,8 +4,14 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const {
   adminReadCacheKey,
+  buildMpesaStkPayload,
+  getCallbackMetadata,
   getBearerToken,
+  getMpesaPassword,
+  getMpesaTimestamp,
   isValidOrderTrackingToken,
+  isValidPaymentLinkToken,
+  normalizeKenyanPhone,
   validateCatalogue
 } = require('./server');
 
@@ -47,4 +53,48 @@ test('accepts only 64-character lowercase hexadecimal order tracking tokens', ()
   assert.equal(isValidOrderTrackingToken('A'.repeat(64)), false);
   assert.equal(isValidOrderTrackingToken('a'.repeat(63)), false);
   assert.equal(isValidOrderTrackingToken('a'.repeat(64) + 'b'), false);
+});
+
+test('normalizes only valid Kenyan M-Pesa phone numbers', () => {
+  assert.equal(normalizeKenyanPhone('0712 345 678'), '254712345678');
+  assert.equal(normalizeKenyanPhone('+254 112 345 678'), '254112345678');
+  assert.equal(normalizeKenyanPhone('712345678'), '254712345678');
+  assert.equal(normalizeKenyanPhone('254012345678'), '');
+  assert.equal(normalizeKenyanPhone('0712'), '');
+});
+
+test('builds the STK timestamp in Nairobi time and the documented password value', () => {
+  assert.equal(getMpesaTimestamp(new Date('2025-01-02T21:04:05.000Z')), '20250103000405');
+  assert.equal(getMpesaPassword('174379', 'passkey', '20250103000405'),
+    Buffer.from('174379passkey20250103000405').toString('base64'));
+});
+
+test('builds a Buy Goods STK request with the configured invoice amount and callback', () => {
+  const payload = buildMpesaStkPayload({
+    shortcode: '7637201',
+    passkey: 'test-passkey',
+    callbackUrl: 'https://api.example.test/api/v1/mpesa/callback',
+    phone: '254712345678',
+    amount: 1250,
+    requestId: '12345678-1234-1234-1234-123456789012',
+    timestamp: '20250103000405'
+  });
+  assert.equal(payload.BusinessShortCode, '7637201');
+  assert.equal(payload.TransactionType, 'CustomerBuyGoodsOnline');
+  assert.equal(payload.PartyA, '254712345678');
+  assert.equal(payload.PartyB, '7637201');
+  assert.equal(payload.Amount, 1250);
+  assert.equal(payload.CallBackURL, 'https://api.example.test/api/v1/mpesa/callback');
+  assert.equal(payload.Password, Buffer.from('7637201test-passkey20250103000405').toString('base64'));
+});
+
+test('validates payment tokens and extracts callback metadata', () => {
+  assert.equal(isValidPaymentLinkToken('b'.repeat(64)), true);
+  assert.equal(isValidPaymentLinkToken('b'.repeat(63)), false);
+  assert.deepEqual(getCallbackMetadata({
+    CallbackMetadata: { Item: [
+      { Name: 'Amount', Value: 500 },
+      { Name: 'MpesaReceiptNumber', Value: 'QAB1234567' }
+    ] }
+  }), { Amount: 500, MpesaReceiptNumber: 'QAB1234567' });
 });

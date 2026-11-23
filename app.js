@@ -2,7 +2,7 @@ const API_URL = "https://script.google.com/macros/s/AKfycbx9xaPSdNyEa51Lws0iEBob
 const CATALOG_API_URL = "https://api.cavalrypublishers.co.ke/api/v1/catalog";
 const ADMIN_API_URL = "https://api.cavalrypublishers.co.ke/api/v1/admin";
 const COMPANY_WHATSAPP = "254726953346"; // Replace with your primary business WhatsApp phone number
-const TILL_NUMBER = "5675635"; // Buy Goods till number clients pay to
+const TILL_NUMBER = "7637201"; // Live Buy Goods till number
 let adminCacheInvalidation = Promise.resolve();
 let preparedDocumentImage = null;
 let preparedDocumentImagePromise = Promise.resolve(null);
@@ -1061,7 +1061,8 @@ function getJobQuoteItems() {
 function updateJobQuoteTotal() {
   const subtotal = getJobQuoteItems().reduce((sum, item) => sum + (Number.isFinite(item.total) ? item.total : 0), 0);
   const discount = editingDocument ? Math.max(0, Number(document.getElementById('jobQuoteDiscount').value) || 0) : 0;
-  const total = Math.max(0, subtotal - discount);
+  const rawTotal = Math.max(0, subtotal - discount);
+  const total = editingDocument && editingDocument.type === 'invoice' ? Math.round(rawTotal) : rawTotal;
   document.getElementById('jobQuoteTotal').textContent = formatKshs(total);
 }
 
@@ -1136,7 +1137,7 @@ function editDocumentFromList(type, reference) {
     alert('Only unconverted quotations and unpaid invoices can be edited.');
     return;
   }
-  let items = Array.isArray(doc.items) ? doc.items : [];
+  let items = Array.isArray(doc.items) ? doc.items.filter(item => item.isRoundingAdjustment !== true) : [];
   if (!items.length) {
     const summary = String(doc.itemsSummary || '').trim();
     const amount = Number(doc.subtotal || doc.total || 0);
@@ -1921,7 +1922,7 @@ function calculateInvoicePreviewTotal() {
   const delivery = Math.max(0, Number(document.getElementById('invoiceDeliveryCost').value) || 0);
   const otherAmount = Math.max(0, Number(document.getElementById('invoiceOtherChargeAmount').value) || 0);
   const baseTotal = currentDocument ? Number(currentDocument.total || 0) : 0;
-  return baseTotal + delivery + otherAmount;
+  return Math.round(baseTotal + delivery + otherAmount);
 }
 
 function updateInvoicePreviewTotal() {
@@ -1999,7 +2000,7 @@ async function requestInvoiceConversion(quotationReference, clientName, clientPh
 }
 
 function openPaymentModal() {
-  if (!currentDocument || currentDocument.type !== 'invoice' || currentDocument.status === 'PAID') return;
+  if (!isStaff || !currentDocument || currentDocument.type !== 'invoice' || currentDocument.status === 'PAID') return;
   closeDocumentPreview();
   const balance = Number(currentDocument.balance ?? currentDocument.total ?? 0);
   document.getElementById('paymentInvoiceReference').textContent = currentDocument.reference;
@@ -2035,7 +2036,7 @@ function setPaymentModalStatus(message, type) {
 
 // Invoice -> Receipt. A production Order is opened automatically by the backend on success.
 async function submitInvoicePaymentFromModal() {
-  if (!currentDocument || currentDocument.type !== 'invoice') return;
+  if (!isStaff || !currentDocument || currentDocument.type !== 'invoice') return;
   const method = document.querySelector('input[name="invoicePaymentMethod"]:checked').value;
   const phone = document.getElementById('paymentMpesaPhone').value.trim();
   const transactionCode = document.getElementById('paymentPaybillCode').value.trim();
@@ -2059,7 +2060,8 @@ async function submitInvoicePaymentFromModal() {
       paymentAmount,
       paymentRequestId: crypto.randomUUID ? crypto.randomUUID() : `PAY-${Date.now()}-${Math.random().toString(36).slice(2)}`,
       paymentMethod: method,
-      paymentReference: method === 'mpesa' ? phone : transactionCode
+      paymentReference: method === 'mpesa' ? phone : transactionCode,
+      staffPassword
     });
     if (result.status !== 'success') throw new Error(result.message || 'Payment confirmation failed.');
     applyPaymentResult(result);
@@ -2135,7 +2137,7 @@ function openDocumentPreview() {
   const canStartProduction = isStaff && isPendingInvoice && (currentDocument.items || []).some(isProductionBookItem) && !invoiceHasProductionOrder(currentDocument.reference);
   document.getElementById('convertQuotationButton').hidden = !isActiveQuotation;
   document.getElementById('startInvoiceProductionButton').hidden = !canStartProduction;
-  document.getElementById('proceedToPaymentButton').hidden = !isPendingInvoice;
+  document.getElementById('proceedToPaymentButton').hidden = !isStaff || !isPendingInvoice;
   document.getElementById('confirmDocumentPaymentButton').hidden = !(isStaff && isPendingInvoice);
   document.getElementById('copyOrderTrackingLinkButton').hidden = !currentDocument.trackingUrl;
   document.getElementById('documentPreviewModal').style.display = 'flex';
@@ -2197,6 +2199,26 @@ async function copyOrderTrackingLink(reference = '') {
   }
 }
 
+async function createInvoicePaymentLink(invoiceReference) {
+  if (!isStaff || !staffPassword.startsWith('SESSION-')) {
+    throw new Error('Staff login is required to create a payment link.');
+  }
+  const response = await fetch(`${ADMIN_API_URL}/mpesa/payment-link`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${staffPassword}`,
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify({ invoiceReference }),
+    signal: AbortSignal.timeout(20000)
+  });
+  const result = await response.json();
+  if (!response.ok || result.status !== 'success' || !result.data?.url) {
+    throw new Error(result.message || 'The invoice payment link could not be created.');
+  }
+  return result.data;
+}
+
 async function confirmCurrentInvoicePayment() {
   if (!currentDocument || currentDocument.type !== 'invoice' || !isStaff) return;
   const balance = Number(currentDocument.balance ?? currentDocument.total ?? 0);
@@ -2206,7 +2228,7 @@ async function confirmCurrentInvoicePayment() {
   if (!paymentMethod) return;
   const paymentReference = prompt('Payment reference or transaction code (optional):', '') || '';
   try {
-    const result = await postApi({ action: 'confirm_invoice_payment', invoiceReference: currentDocument.reference, paymentAmount, paymentRequestId: crypto.randomUUID ? crypto.randomUUID() : `PAY-${Date.now()}-${Math.random().toString(36).slice(2)}`, paymentMethod, paymentReference });
+    const result = await postApi({ action: 'confirm_invoice_payment', invoiceReference: currentDocument.reference, paymentAmount, paymentRequestId: crypto.randomUUID ? crypto.randomUUID() : `PAY-${Date.now()}-${Math.random().toString(36).slice(2)}`, paymentMethod, paymentReference, staffPassword });
     if (result.status !== 'success') throw new Error(result.message || 'Payment confirmation failed.');
     currentDocument = result.data;
     currentDocument.type = 'receipt';
@@ -2865,6 +2887,7 @@ async function startInvoiceProductionFromPreview() {
 }
 
 async function confirmInvoicePaymentFromList(invoiceReference) {
+  if (!isStaff) return;
   const invoice = allDocuments.find(entry => entry.type === 'invoice' && entry.reference === invoiceReference);
   const balance = Number(invoice?.balance ?? invoice?.total ?? 0);
   const paymentAmount = Number(prompt(`Payment amount (outstanding balance ${formatKshs(balance)}):`, balance.toFixed(2)));
@@ -2873,7 +2896,7 @@ async function confirmInvoicePaymentFromList(invoiceReference) {
   if (!paymentMethod) return;
   const paymentReference = prompt('Payment reference or transaction code (optional):', '') || '';
   try {
-    const result = await postApi({ action: 'confirm_invoice_payment', invoiceReference, paymentAmount, paymentRequestId: crypto.randomUUID ? crypto.randomUUID() : `PAY-${Date.now()}-${Math.random().toString(36).slice(2)}`, paymentMethod, paymentReference });
+    const result = await postApi({ action: 'confirm_invoice_payment', invoiceReference, paymentAmount, paymentRequestId: crypto.randomUUID ? crypto.randomUUID() : `PAY-${Date.now()}-${Math.random().toString(36).slice(2)}`, paymentMethod, paymentReference, staffPassword });
     if (result.status !== 'success') throw new Error(result.message || 'Payment confirmation failed.');
     applyPaymentResult(result);
     currentDocument = result.data;
@@ -2930,13 +2953,24 @@ async function shareDocumentViaWhatsApp() {
   const isCompletedOrder = type === 'delivery' || (type === 'order' && status === 'COMPLETED');
   const requiresProduction = Boolean(currentDocument.requiresProduction) || (currentDocument.items || []).some(isProductionBookItem);
   const expectedDelivery = formatOrderDeliveryDate(currentDocument.expectedDeliveryDate);
+  let paymentLink = '';
+  if (type === 'invoice' && ['PENDING', 'PARTIALLY_PAID'].includes(status)) {
+    try {
+      const link = await createInvoicePaymentLink(currentDocument.reference);
+      paymentLink = link.url;
+    } catch (error) {
+      console.error('Invoice payment link creation failed:', error);
+      alert(error.message || 'The invoice payment link could not be created. Please try again.');
+      return;
+    }
+  }
   const trackingNote = currentDocument.trackingUrl && ['invoice', 'receipt'].includes(type)
     ? `\n\n${expectedDelivery ? `Expected delivery: ${expectedDelivery}\n` : ''}Click this link to track your order: ${currentDocument.trackingUrl}`
     : '';
   const items = (currentDocument.items || []).map((item, index) => `${index + 1}. ${item.quantity} x ${item.title} - Kshs. ${Number(item.total || 0).toFixed(2)}`).join('\n');
   let note = '';
   if (type === 'invoice' && status !== 'PAID') {
-    note = `\n\nInvoice total: ${formatKshs(currentDocument.total)}\nPaid to date: ${formatKshs(currentDocument.amountPaid || 0)}\n*Balance due: ${formatKshs(currentDocument.balance ?? currentDocument.total)}*\nPlease pay the balance to *Till No. ${TILL_NUMBER}*.${requiresProduction ? '\nProduction begins after receipt of payment.' : ''}`;
+    note = `\n\nInvoice total: ${formatKshs(currentDocument.total)}\nPaid to date: ${formatKshs(currentDocument.amountPaid || 0)}\n*Balance due: ${formatKshs(currentDocument.balance ?? currentDocument.total)}*\nClick this link to pay the remaining balance: ${paymentLink}${requiresProduction ? '\nProduction begins after receipt of payment.' : ''}`;
   } else if (type === 'receipt') {
     const amountPaid = Number(currentDocument.paymentAmount ?? currentDocument.total ?? 0);
     const balance = Number(currentDocument.balance || 0);
@@ -3252,7 +3286,7 @@ Discount: Kshs. ${discount.toLocaleString('en-US', {minimumFractionDigits: 2})}$
 - PRODUCTION BEGINS AFTER RECEIPT OF PAYMENT
 - DELIVERY WITHIN 2 WORKING DAYS
 
-*Payment Till No: 5675635*`;
+*Payment Till No: 7637201*`;
 
   let targetPhone = COMPANY_WHATSAPP;
   if (phoneInput) {
