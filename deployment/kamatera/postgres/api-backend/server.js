@@ -187,7 +187,7 @@ function hashAdminToken(token) {
 }
 
 function isValidOrderTrackingToken(token) {
-  return /^[a-f0-9]{64}$/.test(String(token || ''));
+  return /^(?:[a-f0-9]{32}|[a-f0-9]{64})$/.test(String(token || ''));
 }
 
 async function readJsonBody(request) {
@@ -368,7 +368,7 @@ function paymentError(message, statusCode = 400) {
 }
 
 function isValidPaymentLinkToken(token) {
-  return /^[a-f0-9]{64}$/.test(String(token || ''));
+  return /^(?:[a-f0-9]{32}|[a-f0-9]{64})$/.test(String(token || ''));
 }
 
 function normalizeKenyanPhone(value) {
@@ -513,7 +513,7 @@ async function createPaymentLink(invoiceReference, session) {
   if (Math.abs(invoice.balance - Math.round(invoice.balance)) > 0.005) {
     throw paymentError('This invoice has a fractional balance and cannot be paid by M-Pesa STK. Adjust the invoice first.', 409);
   }
-  const token = randomBytes(32).toString('hex');
+  const token = randomBytes(16).toString('hex');
   const tokenHash = hashAdminToken(token);
   await pool.query(
     `INSERT INTO mpesa_payment_links (token_hash, invoice_reference, created_by)

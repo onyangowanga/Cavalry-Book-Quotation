@@ -2971,12 +2971,12 @@ async function shareDocumentViaWhatsApp() {
     }
   }
   const trackingNote = currentDocument.trackingUrl && ['invoice', 'receipt'].includes(type)
-    ? `\n\n${expectedDelivery ? `Expected delivery: ${expectedDelivery}\n` : ''}Click this link to track your order: ${currentDocument.trackingUrl}`
+    ? `\n\n${expectedDelivery ? `Expected delivery: ${expectedDelivery}\n\n` : ''}*Click to track order status:*\n${currentDocument.trackingUrl}`
     : '';
   const items = (currentDocument.items || []).map((item, index) => `${index + 1}. ${item.quantity} x ${item.title} - Kshs. ${Number(item.total || 0).toFixed(2)}`).join('\n');
   let note = '';
   if (hasInvoiceBalance) {
-    note = `\n\nInvoice total: ${formatKshs(invoiceTotal)}\nPaid to date: ${formatKshs(amountPaid)}\n*Balance due: ${formatKshs(invoiceBalance)}*\nClick this link to pay the remaining balance: ${paymentLink}${requiresProduction ? '\nProduction begins after receipt of payment.' : ''}`;
+    note = `\n\nInvoice total: ${formatKshs(invoiceTotal)}\nPaid to date: ${formatKshs(amountPaid)}\n*Balance due: ${formatKshs(invoiceBalance)}*\n\n*Click to pay Balance:*\n${paymentLink}${requiresProduction ? '\nProduction begins after receipt of payment.' : ''}`;
   } else if (type === 'receipt') {
     const receiptAmountPaid = Number(currentDocument.paymentAmount ?? currentDocument.total ?? 0);
     const balance = Number(currentDocument.balance || 0);

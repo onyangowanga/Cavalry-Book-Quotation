@@ -120,7 +120,7 @@
     })[status] || String(status || 'Pending').replaceAll('_', ' ').toLowerCase();
 
     async function loadOrderStatus(forceRefresh = false) {
-      if (!/^[a-f0-9]{64}$/.test(token)) {
+      if (!/^(?:[a-f0-9]{32}|[a-f0-9]{64})$/.test(token)) {
         statusMessageText.textContent = 'This order link is invalid or incomplete. Please ask us to send a new link.';
         statusMessage.classList.add('is-error');
         retryButton.hidden = true;

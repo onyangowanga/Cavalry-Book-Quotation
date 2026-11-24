@@ -287,8 +287,8 @@ function getOrderTrackingUrl(token) {
 function ensureOrderTrackingToken(orderRecord) {
   if (!orderRecord || !orderRecord.sheet || !orderRecord.rowNumber) throw new Error('Order record is required.');
   const existingToken = String(orderRecord.values[13] || '').trim();
-  if (/^[a-f0-9]{64}$/.test(existingToken)) return existingToken;
-  const token = (Utilities.getUuid() + Utilities.getUuid()).replace(/-/g, '').toLowerCase();
+  if (/^(?:[a-f0-9]{32}|[a-f0-9]{64})$/.test(existingToken)) return existingToken;
+  const token = Utilities.getUuid().replace(/-/g, '').toLowerCase();
   orderRecord.sheet.getRange(orderRecord.rowNumber, 14).setValue(token);
   orderRecord.values[13] = token;
   return token;
@@ -296,7 +296,7 @@ function ensureOrderTrackingToken(orderRecord) {
 
 function getPublicOrderStatus(ss, trackingToken) {
   const token = String(trackingToken || '').trim().toLowerCase();
-  if (!/^[a-f0-9]{64}$/.test(token)) return { status: 'error', message: 'This order link is invalid.' };
+  if (!/^(?:[a-f0-9]{32}|[a-f0-9]{64})$/.test(token)) return { status: 'error', message: 'This order link is invalid.' };
   const sheet = ss.getSheetByName('orders_log');
   if (!sheet || sheet.getLastRow() < 2 || sheet.getLastColumn() < 14) {
     return { status: 'error', message: 'This order could not be found.' };
@@ -803,7 +803,7 @@ function listDocumentsFromSheet(ss, sheetName, type, context) {
     const response = documentResponse(record, type);
     if (type === 'order') {
       const token = String(values[13] || '').trim();
-      response.trackingUrl = /^[a-f0-9]{64}$/.test(token) ? getOrderTrackingUrl(token) : '';
+      response.trackingUrl = /^(?:[a-f0-9]{32}|[a-f0-9]{64})$/.test(token) ? getOrderTrackingUrl(token) : '';
       response.expectedDeliveryDate = getOrderExpectedDeliveryDate(record);
     } else if (type === 'invoice') {
       const invoice = context
@@ -814,7 +814,7 @@ function listDocumentsFromSheet(ss, sheetName, type, context) {
         : getInvoiceOrderRecord(ss, invoice.reference);
       if (order) {
         const token = String(order.values[13] || '').trim();
-        invoice.trackingUrl = /^[a-f0-9]{64}$/.test(token) ? getOrderTrackingUrl(token) : '';
+        invoice.trackingUrl = /^(?:[a-f0-9]{32}|[a-f0-9]{64})$/.test(token) ? getOrderTrackingUrl(token) : '';
         invoice.expectedDeliveryDate = getOrderExpectedDeliveryDate(order);
       }
       records.push(invoice);

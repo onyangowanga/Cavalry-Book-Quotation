@@ -49,9 +49,12 @@ test('accepts only opaque Apps Script staff session tokens for API authorization
   assert.equal(getBearerToken({ headers: {} }), '');
 });
 
-test('accepts only 64-character lowercase hexadecimal order tracking tokens', () => {
+test('accepts 32- and 64-character lowercase hexadecimal order tracking tokens', () => {
+  assert.equal(isValidOrderTrackingToken('a'.repeat(32)), true);
   assert.equal(isValidOrderTrackingToken('a'.repeat(64)), true);
   assert.equal(isValidOrderTrackingToken('A'.repeat(64)), false);
+  assert.equal(isValidOrderTrackingToken('a'.repeat(31)), false);
+  assert.equal(isValidOrderTrackingToken('a'.repeat(33)), false);
   assert.equal(isValidOrderTrackingToken('a'.repeat(63)), false);
   assert.equal(isValidOrderTrackingToken('a'.repeat(64) + 'b'), false);
 });
@@ -91,10 +94,15 @@ test('builds a Buy Goods STK request with the configured invoice amount and call
 });
 
 test('validates payment tokens and extracts callback metadata', () => {
+  assert.equal(isValidPaymentLinkToken('b'.repeat(32)), true);
   assert.equal(isValidPaymentLinkToken('b'.repeat(64)), true);
+  assert.equal(isValidPaymentLinkToken('b'.repeat(31)), false);
+  assert.equal(isValidPaymentLinkToken('b'.repeat(33)), false);
   assert.equal(isValidPaymentLinkToken('b'.repeat(63)), false);
   assert.equal(buildPaymentLinkUrl('https://api.example.test', 'b'.repeat(64)),
     `https://api.example.test/admin/payment.html#${'b'.repeat(64)}`);
+  assert.equal(buildPaymentLinkUrl('https://api.example.test', 'b'.repeat(32)),
+    `https://api.example.test/admin/payment.html#${'b'.repeat(32)}`);
   assert.deepEqual(getCallbackMetadata({
     CallbackMetadata: { Item: [
       { Name: 'Amount', Value: 500 },

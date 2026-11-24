@@ -208,7 +208,7 @@
       showPaymentActions(null);
       document.getElementById('invoiceDetails').hidden = true;
       setStatus('Loading invoice details…');
-      if (!/^[a-f0-9]{64}$/.test(token)) {
+      if (!/^(?:[a-f0-9]{32}|[a-f0-9]{64})$/.test(token)) {
         setStatus('This payment link is invalid. Please ask us to send a new one.', 'error');
         return;
       }
