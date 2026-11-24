@@ -2,7 +2,7 @@ const API_URL = "https://script.google.com/macros/s/AKfycbx9xaPSdNyEa51Lws0iEBob
 const CATALOG_API_URL = "https://api.cavalrypublishers.co.ke/api/v1/catalog";
 const ADMIN_API_URL = "https://api.cavalrypublishers.co.ke/api/v1/admin";
 const COMPANY_WHATSAPP = "254726953346"; // Replace with your primary business WhatsApp phone number
-const TILL_NUMBER = "7637201"; // Live Buy Goods till number
+const TILL_NUMBER = "5675635"; // Buy Goods till for manual payments
 let adminCacheInvalidation = Promise.resolve();
 let preparedDocumentImage = null;
 let preparedDocumentImagePromise = Promise.resolve(null);
@@ -3292,7 +3292,7 @@ Discount: Kshs. ${discount.toLocaleString('en-US', {minimumFractionDigits: 2})}$
 - PRODUCTION BEGINS AFTER RECEIPT OF PAYMENT
 - DELIVERY WITHIN 2 WORKING DAYS
 
-*Payment Till No: 7637201*`;
+*Payment Till No: 5675635*`;
 
   let targetPhone = COMPANY_WHATSAPP;
   if (phoneInput) {

@@ -6,6 +6,7 @@
   <meta name="referrer" content="no-referrer">
   <meta name="theme-color" content="#24232a">
   <title>Pay invoice | Cavalry Publishers</title>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700;800&family=Manrope:wght@600;700;800&display=swap" rel="stylesheet">
@@ -33,6 +34,8 @@
     .notice { padding:12px 14px; border-radius:10px; background:#f7f3ef; color:var(--muted); font-size:13px; line-height:1.5; }
     button { min-height:48px; border:0; border-radius:10px; padding:12px 16px; background:var(--red); color:#fff; font:inherit; font-weight:800; cursor:pointer; }
     button:disabled { opacity:.58; cursor:wait; }
+    .actions { display:grid; gap:10px; }
+    .action-link { display:grid; place-items:center; min-height:48px; border-radius:10px; padding:12px 16px; background:var(--ink); color:#fff; font-weight:800; text-align:center; text-decoration:none; }
     .status { min-height:1.4em; margin:0; color:var(--muted); font-size:14px; line-height:1.5; }
     .status.error { color:#a51e2d; }
     .status.success { color:var(--green); }
@@ -62,6 +65,10 @@
           <div class="notice">After you continue, check your phone for the official M-Pesa prompt and enter your PIN there. We will never ask for your PIN on this page.</div>
           <button id="payButton" type="submit">Pay remaining balance</button>
         </form>
+        <div class="actions">
+          <button id="downloadReceiptButton" type="button" hidden>Download receipt (PDF)</button>
+          <a id="trackOrderButton" class="action-link" href="#" hidden>Track this order</a>
+        </div>
         <p id="status" class="status" role="status" aria-live="polite">Loading invoice details…</p>
         <button id="retryButton" type="button" hidden>Reload invoice</button>
       </div>
@@ -74,12 +81,22 @@
     const form = document.getElementById('paymentForm');
     const payButton = document.getElementById('payButton');
     const retryButton = document.getElementById('retryButton');
+    const downloadReceiptButton = document.getElementById('downloadReceiptButton');
+    const trackOrderButton = document.getElementById('trackOrderButton');
     let activePaymentId = '';
     let pollTimer = 0;
+    let currentInvoice = null;
+    let currentPayment = null;
     const money = value => `Ksh ${Number(value || 0).toLocaleString('en-KE', { maximumFractionDigits: 2, minimumFractionDigits: 2 })}`;
     function setStatus(message, kind = '') {
       statusNode.textContent = message;
       statusNode.className = `status${kind ? ` ${kind}` : ''}`;
+    }
+    function showPaymentActions(payment) {
+      currentPayment = payment || null;
+      downloadReceiptButton.hidden = !payment || !(payment.receiptReference || payment.receipt);
+      trackOrderButton.hidden = !payment || !payment.trackingUrl;
+      if (payment && payment.trackingUrl) trackOrderButton.href = payment.trackingUrl;
     }
     async function api(path, payload) {
       const response = await fetch(path, {
@@ -98,6 +115,7 @@
       clearInterval(pollTimer);
       form.hidden = true;
       retryButton.hidden = true;
+      showPaymentActions(null);
       document.getElementById('invoiceDetails').hidden = true;
       setStatus('Loading invoice details…');
       if (!/^[a-f0-9]{64}$/.test(token)) {
@@ -106,10 +124,12 @@
       }
       try {
         const invoice = await api('/api/v1/mpesa/checkout', { token });
+        currentInvoice = invoice;
         document.getElementById('subtitle').textContent = `Hello ${invoice.clientName}`;
         document.getElementById('invoiceReference').textContent = invoice.invoiceReference;
         document.getElementById('amountDue').textContent = money(invoice.balance);
         document.getElementById('invoiceDetails').hidden = false;
+        if (invoice.latestPayment) showPaymentActions(invoice.latestPayment);
         if (invoice.balance <= 0) {
           setStatus('This invoice has already been paid in full.', 'success');
           return;
@@ -127,10 +147,18 @@
         const result = await api('/api/v1/mpesa/status', { token, paymentId: activePaymentId });
         if (result.status === 'COMPLETED') {
           clearInterval(pollTimer);
-          form.hidden = true;
+          document.getElementById('amountDue').textContent = money(result.balance);
+          showPaymentActions({
+            ...result,
+            invoiceReference: result.invoiceReference || (currentInvoice && currentInvoice.invoiceReference),
+            clientName: result.clientName || (currentInvoice && currentInvoice.clientName)
+          });
           if (result.balance <= 0) {
+            form.hidden = true;
             setStatus(`Payment confirmed${result.receipt ? ` · receipt ${result.receipt}` : ''}. Your invoice is paid in full.`, 'success');
           } else {
+            form.hidden = false;
+            payButton.disabled = false;
             setStatus(`Payment confirmed${result.receipt ? ` · receipt ${result.receipt}` : ''}. Remaining balance: ${money(result.balance)}.`, 'success');
           }
         } else if (['FAILED', 'REVIEW_REQUIRED', 'EXPIRED'].includes(result.status)) {
@@ -164,6 +192,31 @@
         payButton.disabled = false;
         setStatus(error.message || 'The M-Pesa prompt could not be sent.', 'error');
       }
+    });
+    downloadReceiptButton.addEventListener('click', () => {
+      if (!currentPayment || !window.jspdf || !window.jspdf.jsPDF) {
+        setStatus('The receipt PDF could not be prepared. Please reload and try again.', 'error');
+        return;
+      }
+      const { jsPDF } = window.jspdf;
+      const pdf = new jsPDF();
+      const paidAt = currentPayment.paidAt ? new Date(currentPayment.paidAt).toLocaleString('en-KE') : new Date().toLocaleString('en-KE');
+      pdf.setFontSize(18);
+      pdf.text('CAVALRY PUBLISHERS', 20, 24);
+      pdf.setFontSize(14);
+      pdf.text('PAYMENT RECEIPT', 20, 38);
+      pdf.setFontSize(11);
+      pdf.text([
+        `Receipt: ${currentPayment.receiptReference || currentPayment.receipt || 'Payment confirmed'}`,
+        `M-Pesa transaction: ${currentPayment.receipt || 'N/A'}`,
+        `Invoice: ${currentPayment.invoiceReference || (currentInvoice && currentInvoice.invoiceReference) || 'N/A'}`,
+        `Client: ${currentPayment.clientName || (currentInvoice && currentInvoice.clientName) || 'Valued Client'}`,
+        `Amount received: ${money(currentPayment.amount)}`,
+        `Remaining balance: ${money(currentPayment.balance)}`,
+        `Payment date: ${paidAt}`
+      ], 20, 54, { lineHeightFactor: 1.8 });
+      const reference = String(currentPayment.receiptReference || currentPayment.receipt || 'payment').replace(/[^a-z0-9_-]/gi, '-');
+      pdf.save(`Cavalry-Receipt-${reference}.pdf`);
     });
     retryButton.addEventListener('click', loadCheckout);
     loadCheckout();

@@ -53,6 +53,7 @@
     .item-status { flex: 0 0 auto; color: var(--ink); font-size: 13px; font-weight: 700; text-align: right; }
     .footer { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 22px; color: var(--muted); font-size: 12px; }
     button { min-height: 42px; padding: 0 16px; border: 0; border-radius: 11px; background: var(--red); color: #fff; cursor: pointer; font: inherit; font-weight: 700; }
+    .payment-button { display: inline-flex; align-items: center; min-height: 42px; padding: 0 16px; border-radius: 11px; background: var(--red); color: #fff; font-weight: 700; text-decoration: none; }
     button:disabled { cursor: wait; opacity: .65; }
     .message { margin: 0; padding: 24px 30px; color: var(--muted); line-height: 1.55; }
     .message.is-error { color: #a33030; }
@@ -94,6 +95,7 @@
         <div class="items" id="orderItems"></div>
         <div class="footer">
           <span id="updatedAt"></span>
+          <a id="makePaymentButton" class="payment-button" href="#" hidden>Proceed to payment</a>
           <button type="button" id="refreshButton">Refresh status</button>
         </div>
       </div>
@@ -159,6 +161,9 @@
         document.getElementById('orderTotal').textContent = money(order.total);
         document.getElementById('amountPaid').textContent = money(order.amountPaid);
         document.getElementById('balance').textContent = money(order.balance);
+        const makePaymentButton = document.getElementById('makePaymentButton');
+        makePaymentButton.hidden = !(Number(order.balance) > 0 && order.paymentUrl);
+        if (!makePaymentButton.hidden) makePaymentButton.href = order.paymentUrl;
         document.getElementById('orderItems').innerHTML = items.length
           ? items.map(item => `<div class="item"><div><div class="item-name">${escapeHtml(item.title)}</div><span class="item-meta">${Number(item.quantity || 1)}${item.size ? ` · ${escapeHtml(item.size)}` : ''}${item.mode ? ` · ${escapeHtml(item.mode)}` : ''}</span></div><div class="item-status">${escapeHtml(item.status || 'In production')}</div></div>`).join('')
           : '<p class="message">No production items are listed for this order.</p>';

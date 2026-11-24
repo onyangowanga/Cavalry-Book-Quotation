@@ -147,10 +147,20 @@ async function ensureSchema() {
       callback_amount NUMERIC(12, 2),
       callback_receipt TEXT,
       callback_phone TEXT,
+      receipt_reference TEXT,
+      tracking_url TEXT,
       verification_attempts INTEGER NOT NULL DEFAULT 0,
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
       updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     )
+  `);
+  await pool.query(`
+    ALTER TABLE mpesa_stk_requests
+    ADD COLUMN IF NOT EXISTS receipt_reference TEXT
+  `);
+  await pool.query(`
+    ALTER TABLE mpesa_stk_requests
+    ADD COLUMN IF NOT EXISTS tracking_url TEXT
   `);
   await pool.query(`
     ALTER TABLE mpesa_stk_requests
@@ -317,6 +327,24 @@ async function getPublicOrderStatus(token, forceRefresh = false) {
     const error = new Error(result.message || 'This order could not be found.');
     error.statusCode = result.message === 'This order could not be found.' ? 404 : 502;
     throw error;
+  }
+  const invoiceReference = String(result.data && result.data.invoiceReference || '').trim();
+  if (invoiceReference && Number(result.data.balance) > 0) {
+    await pool.query(
+      `INSERT INTO mpesa_payment_links (token_hash, invoice_reference, created_by)
+       VALUES ($1, $2, 'public-order-tracking')
+       ON CONFLICT (token_hash) DO NOTHING`,
+      [tokenHash, invoiceReference]
+    );
+    const { rows } = await pool.query(
+      `SELECT invoice_reference
+       FROM mpesa_payment_links
+       WHERE token_hash = $1 AND revoked_at IS NULL`,
+      [tokenHash]
+    );
+    if (rows[0] && rows[0].invoice_reference === invoiceReference) {
+      result.data.paymentUrl = buildPaymentLinkUrl(MPESA_PUBLIC_BASE_URL, token);
+    }
   }
   await pool.query(
     `INSERT INTO public_order_status_cache (token_hash, payload, updated_at)
@@ -497,11 +525,31 @@ async function createPaymentLink(invoiceReference, session) {
 async function getCheckoutDetails(token) {
   const link = await getPaymentLink(token);
   const invoice = await getInvoiceSnapshot(link.invoice_reference);
+  const { rows } = await pool.query(
+    `SELECT checkout_request_id, amount, callback_receipt, receipt_reference,
+            tracking_url, updated_at
+     FROM mpesa_stk_requests
+     WHERE token_hash = $1 AND status = 'COMPLETED'
+     ORDER BY updated_at DESC
+     LIMIT 1`,
+    [link.token_hash]
+  );
+  const latestPayment = rows[0] ? {
+    status: 'COMPLETED',
+    paymentId: rows[0].checkout_request_id,
+    amount: Number(rows[0].amount),
+    receipt: rows[0].callback_receipt,
+    receiptReference: rows[0].receipt_reference,
+    trackingUrl: rows[0].tracking_url,
+    paidAt: rows[0].updated_at,
+    balance: invoice.balance
+  } : null;
   return {
     invoiceReference: invoice.reference,
     clientName: invoice.clientName || 'Valued Client',
     balance: invoice.balance,
-    status: invoice.status
+    status: invoice.status,
+    latestPayment
   };
 }
 
@@ -696,9 +744,10 @@ async function processMpesaCallback(checkoutRequestId) {
     await pool.query(
       `UPDATE mpesa_stk_requests
        SET status = 'COMPLETED', callback_result_desc = 'Payment confirmed',
+           receipt_reference = $2, tracking_url = $3,
            updated_at = NOW()
        WHERE id = $1`,
-      [attempt.id]
+      [attempt.id, String(result.reference || ''), String(result.trackingUrl || '')]
     );
     await pool.query('DELETE FROM admin_read_cache');
     await pool.query('DELETE FROM public_order_status_cache');
@@ -877,7 +926,8 @@ async function handleRequest(request, response) {
       const link = await getPaymentLink(String(body.token || ''));
       const paymentId = String(body.paymentId || '');
       const { rows } = await pool.query(
-        `SELECT status, callback_result_desc, callback_receipt
+        `SELECT status, callback_result_desc, callback_receipt, amount,
+                receipt_reference, tracking_url, updated_at
          FROM mpesa_stk_requests
          WHERE checkout_request_id = $1 AND token_hash = $2`,
         [paymentId, link.token_hash]
@@ -886,8 +936,14 @@ async function handleRequest(request, response) {
       const data = { status: rows[0].status, message: rows[0].callback_result_desc || '' };
       if (rows[0].status === 'COMPLETED') {
         data.receipt = rows[0].callback_receipt;
+        data.amount = Number(rows[0].amount);
+        data.receiptReference = rows[0].receipt_reference;
+        data.trackingUrl = rows[0].tracking_url;
+        data.paidAt = rows[0].updated_at;
         const invoice = await getInvoiceSnapshot(link.invoice_reference);
         data.balance = invoice.balance;
+        data.invoiceReference = invoice.reference;
+        data.clientName = invoice.clientName || 'Valued Client';
         data.invoiceStatus = invoice.status;
       }
       sendJson(response, 200, { status: 'success', data }, origin);

@@ -342,6 +342,7 @@ function getPublicOrderStatus(ss, trackingToken) {
   return {
     status: 'success',
     data: {
+      invoiceReference: invoice ? invoice.reference : '',
       orderReference: order.reference,
       createdAt: order.timestamp instanceof Date ? order.timestamp.toISOString() : String(order.timestamp || ''),
       orderStatus: String(order.status || 'IN_PRODUCTION'),
@@ -1606,7 +1607,7 @@ function doPost(e) {
       }
       const schedule = history.filter(entry => entry.event === 'SCHEDULE' && entry.invoiceReference === invoice.reference).pop() || {};
       const money = amount => 'Kshs. ' + Number(amount || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-      const message = `Hello ${invoice.clientName}, a friendly reminder that invoice ${invoice.reference} has an outstanding balance of ${money(invoice.balance)}.\nInvoice total: ${money(invoice.total)}\nPayments received: ${money(invoice.amountPaid)}${schedule.dueDate ? '\nPayment due: ' + schedule.dueDate : ''}${schedule.promisedDate ? '\nAgreed payment date: ' + schedule.promisedDate : ''}\nKindly pay the balance to Till No. 7637201, quoting your invoice reference. If you have already paid, please share the transaction reference for reconciliation. Thank you for your business.`;
+      const message = `Hello ${invoice.clientName}, a friendly reminder that invoice ${invoice.reference} has an outstanding balance of ${money(invoice.balance)}.\nInvoice total: ${money(invoice.total)}\nPayments received: ${money(invoice.amountPaid)}${schedule.dueDate ? '\nPayment due: ' + schedule.dueDate : ''}${schedule.promisedDate ? '\nAgreed payment date: ' + schedule.promisedDate : ''}\nKindly pay the balance to Till No. 5675635, quoting your invoice reference. If you have already paid, please share the transaction reference for reconciliation. Thank you for your business.`;
       const requestId = Utilities.getUuid();
       CacheService.getScriptCache().put('reminder-' + requestId, JSON.stringify({ invoiceReference: invoice.reference, message, requestId, authValue }), 1800);
       return ContentService.createTextOutput(JSON.stringify({ status: 'success', data: invoice, message, requestId })).setMimeType(ContentService.MimeType.JSON);
