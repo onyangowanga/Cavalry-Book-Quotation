@@ -498,12 +498,17 @@
       <div class="document-preview-toolbar">
         <button class="refresh-btn" type="button" onclick="generatePDF(currentDocument.type, currentDocument.reference)">Download PDF</button>
         <button class="refresh-btn" type="button" onclick="generateJPEG(currentDocument.type, currentDocument.reference)">Download JPEG</button>
-        <button class="whatsapp-btn" type="button" onclick="shareDocumentViaWhatsApp()">Share via WhatsApp</button>
+        <button class="whatsapp-btn" id="shareDocumentViaWhatsAppButton" type="button" onclick="shareDocumentViaWhatsApp()">Prepare WhatsApp share</button>
         <button class="custom-btn" type="button" id="copyOrderTrackingLinkButton" onclick="copyOrderTrackingLink()" hidden>Copy order status link</button>
         <button class="custom-btn" type="button" id="convertQuotationButton" onclick="convertCurrentQuotationToInvoice()" hidden>Convert to invoice</button>
         <button class="custom-btn" type="button" id="startInvoiceProductionButton" onclick="startInvoiceProductionFromPreview()" hidden>Start production</button>
         <button class="custom-btn" type="button" id="proceedToPaymentButton" onclick="openPaymentModal()" hidden>Proceed to payment</button>
         <button class="custom-btn" type="button" id="confirmDocumentPaymentButton" onclick="confirmCurrentInvoicePayment()" hidden>Confirm payment</button>
+      </div>
+      <div id="documentShareFollowup" class="document-share-followup" hidden>
+        <p id="documentShareStatus" class="checkout-status" role="status" aria-live="polite"></p>
+        <button id="sharePreparedDocumentButton" class="whatsapp-btn" type="button" onclick="sharePreparedDocumentViaWhatsApp()" hidden>Share JPEG and message</button>
+        <a id="openWhatsAppFallbackLink" class="whatsapp-btn document-share-fallback" target="_blank" rel="noopener" hidden>Open WhatsApp message</a>
       </div>
       <article id="documentRenderSurface" class="document-render-surface"></article>
     </div>

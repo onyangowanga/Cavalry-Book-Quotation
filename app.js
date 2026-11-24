@@ -7,6 +7,7 @@ let adminCacheInvalidation = Promise.resolve();
 let preparedDocumentImage = null;
 let preparedDocumentImagePromise = Promise.resolve(null);
 let preparedDocumentImageKey = '';
+let pendingWhatsAppShare = null;
 const ADMIN_MUTATION_ACTIONS = new Set([
   'add_expense', 'advance_production_stage', 'complete_order', 'confirm_invoice_payment',
   'confirm_reminder_sent', 'convert_quote_to_invoice', 'delete_quotation', 'manage_admin_record',
@@ -2129,6 +2130,7 @@ function renderDocumentHtml(documentData) {
 
 function openDocumentPreview() {
   if (!currentDocument) return;
+  resetDocumentShareState();
   document.getElementById('documentPreviewTitle').textContent = `${currentDocument.type || 'Document'} ${currentDocument.reference || ''}`;
   const renderSurface = document.getElementById('documentRenderSurface');
   renderSurface.innerHTML = renderDocumentHtml(currentDocument);
@@ -2142,6 +2144,16 @@ function openDocumentPreview() {
   document.getElementById('copyOrderTrackingLinkButton').hidden = !currentDocument.trackingUrl;
   document.getElementById('documentPreviewModal').style.display = 'flex';
   window.requestAnimationFrame(() => prepareDocumentShareImage(renderSurface));
+}
+
+function resetDocumentShareState() {
+  pendingWhatsAppShare = null;
+  document.getElementById('documentShareFollowup').hidden = true;
+  document.getElementById('documentShareStatus').textContent = '';
+  document.getElementById('sharePreparedDocumentButton').hidden = true;
+  document.getElementById('sharePreparedDocumentButton').disabled = false;
+  document.getElementById('openWhatsAppFallbackLink').hidden = true;
+  document.getElementById('shareDocumentViaWhatsAppButton').disabled = false;
 }
 
 function getDocumentImageKey(documentData) {
@@ -2170,7 +2182,10 @@ function prepareDocumentShareImage(surface) {
   })();
 }
 
-function closeDocumentPreview() { document.getElementById('documentPreviewModal').style.display = 'none'; }
+function closeDocumentPreview() {
+  document.getElementById('documentPreviewModal').style.display = 'none';
+  resetDocumentShareState();
+}
 
 async function copyOrderTrackingLink(reference = '') {
   const currentMatches = currentDocument && (!reference || currentDocument.reference === reference);
@@ -2959,6 +2974,18 @@ async function shareDocumentViaWhatsApp() {
     status === 'PAID' ? 0 : Math.max(0, invoiceTotal - amountPaid)
   ));
   const hasInvoiceBalance = type === 'invoice' && Number.isFinite(invoiceBalance) && invoiceBalance > 0;
+  const shareButton = document.getElementById('shareDocumentViaWhatsAppButton');
+  const shareFollowup = document.getElementById('documentShareFollowup');
+  const shareStatus = document.getElementById('documentShareStatus');
+  const sharePreparedButton = document.getElementById('sharePreparedDocumentButton');
+  const fallbackLink = document.getElementById('openWhatsAppFallbackLink');
+  pendingWhatsAppShare = null;
+  shareButton.disabled = true;
+  shareFollowup.hidden = false;
+  shareStatus.className = 'checkout-status';
+  shareStatus.textContent = 'Preparing the document image and WhatsApp message…';
+  sharePreparedButton.hidden = true;
+  fallbackLink.hidden = true;
   let paymentLink = '';
   if (hasInvoiceBalance) {
     try {
@@ -2966,7 +2993,9 @@ async function shareDocumentViaWhatsApp() {
       paymentLink = link.url;
     } catch (error) {
       console.error('Invoice payment link creation failed:', error);
-      alert(error.message || 'The invoice payment link could not be created. Please try again.');
+      shareStatus.className = 'checkout-status is-error';
+      shareStatus.textContent = error.message || 'The invoice payment link could not be created. Please try again.';
+      shareButton.disabled = false;
       return;
     }
   }
@@ -3005,31 +3034,79 @@ async function shareDocumentViaWhatsApp() {
     }
     if (!blob) throw new Error('The document image could not be created.');
     const file = new File([blob], fileName, { type: 'image/jpeg' });
-    if (navigator.canShare && navigator.canShare({ files: [file] }) && navigator.share) {
+    let canShareFile = false;
+    if (navigator.share && navigator.canShare) {
       try {
-        await navigator.share({ files: [file], text: message, title: `Cavalry Publishers ${type}` });
-        return;
+        canShareFile = navigator.canShare({ files: [file] });
       } catch (error) {
-        if (error.name === 'AbortError') return;
-        console.warn('Android/browser file sharing failed; opening WhatsApp with a manual-attachment fallback:', error);
+        console.warn('Browser file-sharing capability check failed:', error);
       }
     }
+    pendingWhatsAppShare = {
+      file,
+      message,
+      title: `Cavalry Publishers ${type}`,
+      canShareFile
+    };
+    fallbackLink.href = `https://wa.me/${COMPANY_WHATSAPP}?text=${encodeURIComponent(message)}`;
+    if (canShareFile) {
+      shareStatus.className = 'checkout-status is-success';
+      shareStatus.textContent = 'The JPEG and message are ready. Tap below to open the share sheet and choose WhatsApp.';
+      sharePreparedButton.hidden = false;
+    } else {
+      shareStatus.className = 'checkout-status';
+      shareStatus.textContent = 'This browser cannot attach image files automatically. Download the JPEG, then attach it in WhatsApp.';
+      fallbackLink.hidden = false;
+    }
   } catch (error) {
-    console.warn('Document image could not be prepared; opening WhatsApp with the message only:', error);
+    console.error('WhatsApp document preparation failed:', error);
+    shareStatus.className = 'checkout-status is-error';
+    shareStatus.textContent = error.message || 'The document image and message could not be prepared. Please try again.';
+  } finally {
+    shareButton.disabled = false;
   }
+}
 
-  if (blob) {
-    const downloadLink = document.createElement('a');
-    downloadLink.download = fileName;
-    downloadLink.href = URL.createObjectURL(blob);
-    downloadLink.click();
-    window.setTimeout(() => URL.revokeObjectURL(downloadLink.href), 60000);
+function sharePreparedDocumentViaWhatsApp() {
+  const pendingShare = pendingWhatsAppShare;
+  if (!pendingShare || !pendingShare.canShareFile || !navigator.share) return;
+  const shareButton = document.getElementById('sharePreparedDocumentButton');
+  const shareStatus = document.getElementById('documentShareStatus');
+  const fallbackLink = document.getElementById('openWhatsAppFallbackLink');
+  let sharePromise;
+  shareButton.disabled = true;
+  try {
+    sharePromise = navigator.share({
+      files: [pendingShare.file],
+      text: pendingShare.message,
+      title: pendingShare.title
+    });
+  } catch (error) {
+    shareButton.disabled = false;
+    shareStatus.className = 'checkout-status is-error';
+    shareStatus.textContent = 'The JPEG could not be shared. Download it and attach it in WhatsApp.';
+    fallbackLink.hidden = false;
+    return;
   }
-  const fallbackMessage = blob && !isCompletedOrder
-    ? `${message}\n\nPlease attach the downloaded document image: ${fileName}`
-    : message;
-  window.location.assign(`https://wa.me/${COMPANY_WHATSAPP}?text=${encodeURIComponent(fallbackMessage)}`);
-  if (!blob) alert('WhatsApp opened with the message. The document image could not be prepared, so please share the document separately.');
+  Promise.resolve(sharePromise).then(() => {
+    if (pendingWhatsAppShare !== pendingShare) return;
+    pendingWhatsAppShare = null;
+    shareButton.hidden = true;
+    shareStatus.className = 'checkout-status is-success';
+    shareStatus.textContent = 'The document was shared.';
+  }).catch(error => {
+    if (pendingWhatsAppShare !== pendingShare) return;
+    shareButton.disabled = false;
+    if (error.name === 'AbortError') {
+      shareStatus.className = 'checkout-status';
+      shareStatus.textContent = 'Sharing was canceled. Your JPEG is still ready to share.';
+      return;
+    }
+    console.error('Native document sharing failed:', error);
+    shareStatus.className = 'checkout-status is-error';
+    shareStatus.textContent = 'The JPEG could not be shared automatically. Download it and attach it in WhatsApp.';
+    fallbackLink.hidden = false;
+  });
 }
 
 function updateCartFab() {
