@@ -8,6 +8,7 @@ const PORT = Number(process.env.PORT || 3000);
 const SOURCE_URL = process.env.CATALOG_SOURCE_URL || '';
 const MPESA_ENVIRONMENT = String(process.env.MPESA_ENVIRONMENT || '').toLowerCase();
 const MPESA_SHORTCODE = String(process.env.MPESA_SHORTCODE || '');
+const MPESA_TILL_NUMBER = String(process.env.MPESA_TILL_NUMBER || '');
 const MPESA_CONSUMER_KEY = String(process.env.MPESA_CONSUMER_KEY || '');
 const MPESA_CONSUMER_SECRET = String(process.env.MPESA_CONSUMER_SECRET || '');
 const MPESA_PASSKEY = String(process.env.MPESA_PASSKEY || '');
@@ -361,19 +362,19 @@ function getMpesaTimestamp(date = new Date()) {
   return `${parts.year}${parts.month}${parts.day}${parts.hour}${parts.minute}${parts.second}`;
 }
 
-function getMpesaPassword(shortcode, passkey, timestamp) {
-  return Buffer.from(`${shortcode}${passkey}${timestamp}`).toString('base64');
+function getMpesaPassword(businessShortCode, passkey, timestamp) {
+  return Buffer.from(`${businessShortCode}${passkey}${timestamp}`).toString('base64');
 }
 
-function buildMpesaStkPayload({ shortcode, passkey, callbackUrl, phone, amount, requestId, timestamp }) {
+function buildMpesaStkPayload({ businessShortCode, tillNumber, passkey, callbackUrl, phone, amount, requestId, timestamp }) {
   return {
-    BusinessShortCode: shortcode,
-    Password: getMpesaPassword(shortcode, passkey, timestamp),
+    BusinessShortCode: businessShortCode,
+    Password: getMpesaPassword(businessShortCode, passkey, timestamp),
     Timestamp: timestamp,
     TransactionType: 'CustomerBuyGoodsOnline',
     Amount: amount,
     PartyA: phone,
-    PartyB: shortcode,
+    PartyB: tillNumber,
     PhoneNumber: phone,
     CallBackURL: callbackUrl,
     AccountReference: `CP${requestId.replace(/-/g, '').slice(0, 10)}`,
@@ -384,12 +385,14 @@ function buildMpesaStkPayload({ shortcode, passkey, callbackUrl, phone, amount, 
 function getMpesaConfig() {
   if (!['production', 'sandbox'].includes(MPESA_ENVIRONMENT) ||
       !/^\d{5,10}$/.test(MPESA_SHORTCODE) ||
+      !/^\d{5,10}$/.test(MPESA_TILL_NUMBER) ||
       !MPESA_CONSUMER_KEY || !MPESA_CONSUMER_SECRET || !MPESA_PASSKEY ||
       !MPESA_APPS_SCRIPT_SECRET || !/^https:\/\//i.test(MPESA_PUBLIC_BASE_URL)) {
     throw paymentError('M-Pesa payments are not fully configured on the server.', 503);
   }
   return {
-    shortcode: MPESA_SHORTCODE,
+    businessShortCode: MPESA_SHORTCODE,
+    tillNumber: MPESA_TILL_NUMBER,
     callbackUrl: `${MPESA_PUBLIC_BASE_URL}/api/v1/mpesa/callback`
   };
 }
@@ -557,7 +560,8 @@ async function initiateMpesaPayment(token, phoneValue) {
 
   const timestamp = getMpesaTimestamp();
   const payload = buildMpesaStkPayload({
-    shortcode: config.shortcode,
+    businessShortCode: config.businessShortCode,
+    tillNumber: config.tillNumber,
     passkey: MPESA_PASSKEY,
     callbackUrl: config.callbackUrl,
     phone,
@@ -610,11 +614,11 @@ function getCallbackMetadata(callback) {
 }
 
 async function queryMpesaPayment(checkoutRequestId) {
-  const { shortcode } = getMpesaConfig();
+  const { businessShortCode } = getMpesaConfig();
   const timestamp = getMpesaTimestamp();
   return callMpesaApi('/mpesa/stkpushquery/v1/query', {
-    BusinessShortCode: shortcode,
-    Password: getMpesaPassword(shortcode, MPESA_PASSKEY, timestamp),
+    BusinessShortCode: businessShortCode,
+    Password: getMpesaPassword(businessShortCode, MPESA_PASSKEY, timestamp),
     Timestamp: timestamp,
     CheckoutRequestID: checkoutRequestId
   });

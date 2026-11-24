@@ -72,7 +72,8 @@ test('builds the STK timestamp in Nairobi time and the documented password value
 
 test('builds a Buy Goods STK request with the configured invoice amount and callback', () => {
   const payload = buildMpesaStkPayload({
-    shortcode: '7637201',
+    businessShortCode: '7637201',
+    tillNumber: '5675635',
     passkey: 'test-passkey',
     callbackUrl: 'https://api.example.test/api/v1/mpesa/callback',
     phone: '254712345678',
@@ -83,7 +84,7 @@ test('builds a Buy Goods STK request with the configured invoice amount and call
   assert.equal(payload.BusinessShortCode, '7637201');
   assert.equal(payload.TransactionType, 'CustomerBuyGoodsOnline');
   assert.equal(payload.PartyA, '254712345678');
-  assert.equal(payload.PartyB, '7637201');
+  assert.equal(payload.PartyB, '5675635');
   assert.equal(payload.Amount, 1250);
   assert.equal(payload.CallBackURL, 'https://api.example.test/api/v1/mpesa/callback');
   assert.equal(payload.Password, Buffer.from('7637201test-passkey20250103000405').toString('base64'));
