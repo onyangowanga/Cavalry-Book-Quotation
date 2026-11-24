@@ -148,6 +148,7 @@ async function ensureSchema() {
       callback_receipt TEXT,
       callback_phone TEXT,
       receipt_reference TEXT,
+      receipt_data JSONB,
       tracking_url TEXT,
       verification_attempts INTEGER NOT NULL DEFAULT 0,
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -157,6 +158,10 @@ async function ensureSchema() {
   await pool.query(`
     ALTER TABLE mpesa_stk_requests
     ADD COLUMN IF NOT EXISTS receipt_reference TEXT
+  `);
+  await pool.query(`
+    ALTER TABLE mpesa_stk_requests
+    ADD COLUMN IF NOT EXISTS receipt_data JSONB
   `);
   await pool.query(`
     ALTER TABLE mpesa_stk_requests
@@ -527,19 +532,37 @@ async function getCheckoutDetails(token) {
   const invoice = await getInvoiceSnapshot(link.invoice_reference);
   const { rows } = await pool.query(
     `SELECT checkout_request_id, amount, callback_receipt, receipt_reference,
-            tracking_url, updated_at
+            receipt_data, tracking_url, updated_at
      FROM mpesa_stk_requests
      WHERE token_hash = $1 AND status = 'COMPLETED'
      ORDER BY updated_at DESC
      LIMIT 1`,
     [link.token_hash]
   );
+  let receiptData = rows[0] && rows[0].receipt_data;
+  if (rows[0] && !receiptData && rows[0].receipt_reference) {
+    const receiptResult = await callAppsScript({
+      action: 'get_document_data',
+      reference: rows[0].receipt_reference
+    });
+    if (receiptResult.status !== 'success' || !receiptResult.data || receiptResult.data.type !== 'receipt') {
+      throw paymentError('The system-generated receipt is temporarily unavailable. Please reload shortly.', 502);
+    }
+    receiptData = receiptResult.data;
+    await pool.query(
+      `UPDATE mpesa_stk_requests
+       SET receipt_data = $2::jsonb
+       WHERE checkout_request_id = $1 AND receipt_data IS NULL`,
+      [rows[0].checkout_request_id, JSON.stringify(receiptData)]
+    );
+  }
   const latestPayment = rows[0] ? {
     status: 'COMPLETED',
     paymentId: rows[0].checkout_request_id,
     amount: Number(rows[0].amount),
     receipt: rows[0].callback_receipt,
     receiptReference: rows[0].receipt_reference,
+    receiptData,
     trackingUrl: rows[0].tracking_url,
     paidAt: rows[0].updated_at,
     balance: invoice.balance
@@ -741,13 +764,16 @@ async function processMpesaCallback(checkoutRequestId) {
       );
       return;
     }
+    if (!result.data || result.data.type !== 'receipt' || result.data.reference !== result.reference) {
+      throw new Error('Apps Script did not return the generated receipt document.');
+    }
     await pool.query(
       `UPDATE mpesa_stk_requests
        SET status = 'COMPLETED', callback_result_desc = 'Payment confirmed',
-           receipt_reference = $2, tracking_url = $3,
+           receipt_reference = $2, receipt_data = $3::jsonb, tracking_url = $4,
            updated_at = NOW()
        WHERE id = $1`,
-      [attempt.id, String(result.reference || ''), String(result.trackingUrl || '')]
+      [attempt.id, String(result.reference || ''), JSON.stringify(result.data), String(result.trackingUrl || '')]
     );
     await pool.query('DELETE FROM admin_read_cache');
     await pool.query('DELETE FROM public_order_status_cache');
@@ -927,7 +953,7 @@ async function handleRequest(request, response) {
       const paymentId = String(body.paymentId || '');
       const { rows } = await pool.query(
         `SELECT status, callback_result_desc, callback_receipt, amount,
-                receipt_reference, tracking_url, updated_at
+                receipt_reference, receipt_data, tracking_url, updated_at
          FROM mpesa_stk_requests
          WHERE checkout_request_id = $1 AND token_hash = $2`,
         [paymentId, link.token_hash]
@@ -938,6 +964,7 @@ async function handleRequest(request, response) {
         data.receipt = rows[0].callback_receipt;
         data.amount = Number(rows[0].amount);
         data.receiptReference = rows[0].receipt_reference;
+        data.receiptData = rows[0].receipt_data;
         data.trackingUrl = rows[0].tracking_url;
         data.paidAt = rows[0].updated_at;
         const invoice = await getInvoiceSnapshot(link.invoice_reference);
